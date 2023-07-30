@@ -11,5 +11,7 @@ User management is done from the CLI and stores users credentials and sessions i
 ## Authors
 
 **Current Author:** @Snuffy2
+
 **Initial Author:** @roman-vynar
+
 **Expanded from:** https://github.com/roman-vynar/random-scripts
