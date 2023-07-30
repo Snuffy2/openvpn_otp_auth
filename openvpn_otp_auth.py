@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
 """OpenVPN OTP auth script.
+Version: 1.1
 
-Expanded from: https://github.com/roman-vynar/random-scripts/blob/main/openvpn_otp_auth_sample.py by @roman-vynar
+Author: @Snuffy2
+Initial Author: @roman-vynar
+Expanded from: https://github.com/roman-vynar/random-scripts
 
-This script is run on OpenVPN control channel renegotiation.
+Validates OpenVPN username/password/TOTP from file passed as the first arg when called using auth-user-pass-verify.
+TOTP/2FA/MFA uses Google Authenticator (or Authenticator-supporting third-party applications)
+User management is done from the CLI and stores users credentials and sessions in SQLite DBs.
+
 Use cases:
-1. initial connect or after manual disconnect - a new OTP session record is created in sqlite.
-2. on reconnect - an user session is validated.
+1. Initial connect or after manual disconnect - a new OTP session record is created.
+2. If using auth-gen-token with external-auth - a user session is validated.
 
-Supports TOTP to use with Google Authenticator.
-Retrieves user info from os.environ and username/password/TOTP from file passed as the first arg.
+Changelog:
+1.0: Initial @Snuffy2 release, expanded from @roman-vynar
+1.1: Support external-auth
 """
 import argparse
 import base64
@@ -24,12 +31,12 @@ import sys
 import pyotp
 
 parser = argparse.ArgumentParser(
-    description=f"""OpenVPN python authentication script with password and multi-factor authentication (MFA) [TOTP] for use with auth-user-pass-verify via-file option. Designed to be used with OpenVPN on OpenWRT.\n
+    description=f"""OpenVPN python authentication script with password and multi-factor authentication (MFA) [TOTP] for use with auth-user-pass-verify via-file option.\n
 Installation:
 1. Place the {os.path.basename(__file__)} script in a location that ideally wont be removed by system updates (ex. /etc/config/ovpnauth).
 2. Run: 'python {os.path.basename(__file__)} --install' to build the config file {os.path.realpath(__file__).split('.')[0]}.conf in the same folder as the python script.
 3. Review the Config file and make any neccesary changes making sure the locations are correct and the issuer name is set.\n
-Example server.ovpn line:\n\tauth-user-pass-verify {os.path.realpath(__file__)} via-file\n\n""",
+Example server.ovpn lines:\n\tauth-user-pass-verify {os.path.realpath(__file__)} via-file\n\tauth-gen-token 0 external-auth\n\n""",
     epilog="Put the username or password in quotes if getting errors with not enough arguments. When new users are created or TOTP is changed, the TOTP QR Code and URL will display and also be saved to a file called <name>.totp",
     formatter_class=argparse.RawDescriptionHelpFormatter,
 )
@@ -88,7 +95,7 @@ USER_DB_SCHEMA = "CREATE TABLE users (username VARCHAR PRIMARY KEY, password_has
 
 def main():
     """Main func."""
-    print(f"UserID: {os.geteuid()}")
+    # print(f"Debug: UserID: {os.geteuid()}")
     # First arg is a tmp file with 2 lines: username and password
     with open(sys.argv[1], "r") as tmpfile:
         username = tmpfile.readline().rstrip("\n")
@@ -100,59 +107,66 @@ def main():
         sys.exit(1)
     print(f">> Username: {username}")
     # print(f"Debug: User Db: {user}")
-    password_data = password.split(":")
-    if password.startswith("SCRV1:") and len(password_data) == 3:
+    session_state = os.environ.get("session_state")
+    # session_id = os.environ.get("session_id")
+    # print(f"Debug: session_state: {session_state}")
+    # print(f"Debug: session_id: {session_id}")
+    if session_state is None or session_state == "Initial":
         # Initial connect or full re-connect phase.
-        # print(f"Debug: Encoded: password: {password_data[1]}, otp: {password_data[2]}")
-        try:
-            entered_pass = base64.b64decode(password_data[1]).decode()
-        except base64.binascii.Error as e:
-            print(f">> Invalid password for user: {username} [{e}]")
-            sys.exit(1)
-        except UnicodeDecodeError as e:
-            print(f">> Invalid password for user: {username}: [{e}]")
-            sys.exit(1)
-        # print(f"Debug: Decoded: password: {entered_pass}")
+        password_data = password.split(":")
+        if password.startswith("SCRV1:") and len(password_data) == 3:
 
-        entered_pass_hash = pass_hash(entered_pass)
-        # print(f"Debug: entered_pass_hash: {entered_pass_hash}")
-        # Verify password.
-        if entered_pass_hash != user[1]:
-            print(f">> Wrong password for user: {username}")
+            # print(f"Debug: Encoded: password: {password_data[1]}, otp: {password_data[2]}")
+            try:
+                entered_pass = base64.b64decode(password_data[1]).decode()
+            except base64.binascii.Error as e:
+                print(f">> Invalid password for user: {username} [{e}]")
+                sys.exit(1)
+            except UnicodeDecodeError as e:
+                print(f">> Invalid password for user: {username}: [{e}]")
+                sys.exit(1)
+            # print(f"Debug: Decoded: password: {entered_pass}")
+
+            entered_pass_hash = pass_hash(entered_pass)
+            # print(f"Debug: entered_pass_hash: {entered_pass_hash}")
+            # Verify password.
+            if entered_pass_hash != user[1]:
+                print(f">> Wrong password for user: {username}")
+                sys.exit(1)
+
+            try:
+                entered_otp = base64.b64decode(password_data[2]).decode()
+            except base64.binascii.Error as e:
+                print(f">> Invalid TOTP for user: {username} [{e}]")
+                sys.exit(1)
+            except UnicodeDecodeError as e:
+                print(f">> Invalid TOTP for user: {username} [{e}]")
+                sys.exit(1)
+            # print(f"Debug: Decoded: otp: {entered_otp}")
+
+            # Verify OTP, no matter if we have a valid OTP user session as the user is prompted for OTP anyway.
+            if not verify_totp(user[2], entered_otp):
+                print(f">> Wrong TOTP for user: {username}")
+                sys.exit(1)
+
+            print(f">> Login valid for user: {username}")
+
+            create_session(username)
+            sys.exit(0)
+
+        else:
+            print(f">> Invalid password for user: {username}")
             sys.exit(1)
 
-        try:
-            entered_otp = base64.b64decode(password_data[2]).decode()
-        except base64.binascii.Error as e:
-            print(f">> Invalid TOTP for user: {username} [{e}]")
-            sys.exit(1)
-        except UnicodeDecodeError as e:
-            print(f">> Invalid TOTP for user: {username} [{e}]")
-            sys.exit(1)
-        # print(f"Debug: Decoded: otp: {entered_otp}")
-
-        # Verify OTP, no matter if we have a valid OTP user session as the user is prompted for OTP anyway.
-        if not verify_totp(user[2], entered_otp):
-            print(f">> Wrong TOTP for user: {username}")
-            sys.exit(1)
-
-        print(f">> Login valid for user: {username}")
-
-        create_session(username)
-
-    elif len(password) % 4 == 0:
-        # Control channel renegotiation phase.
-        # We don't know how to verify auth-token, however it should be base64.
-        # Also the server generates a new one anyway and auth-token validation is in fact done only
-        # on data channel renegotiation, not on control one.
+    elif session_state == "Authenticated":
+        # external-auth is enabled and auth-token is Authenticated
         # Verify OTP user session previously saved into sqlite.
         validate_session(username)
-
     else:
-        print(f">> Invalid password for user: {username}")
+        print(
+            f">> Invalid auth-token for user: {username}. session_state: {session_state}"
+        )
         sys.exit(1)
-
-    sys.exit(0)
 
 
 def pass_hash(password):
@@ -180,10 +194,18 @@ def create_session(username):
 
 def validate_session(username):
     """Validate user OTP session."""
-    vpn_client = os.environ["IV_GUI_VER"]
-    current_ip = os.environ["untrusted_ip"]
+    vpn_client = os.environ.get("IV_GUI_VER")
+    current_ip = os.environ.get("untrusted_ip")
     now = datetime.datetime.now()
     session = get_session(username)
+    # session: 0=vpn_client, 1=ip_address, 2=verified_on
+    # print(f"Debug: session: {session}")
+    # print(f"Debug: vpn_client: {vpn_client}")
+    # print(f"Debug: session vpn_client: {session[0]}")
+    # print(f"Debug: current_ip: {current_ip}")
+    # print(f"Debug: session ip_address: {session[1]}")
+    # print(f"Debug: expiration before: {(now - datetime.timedelta(hours=SESSION_DURATION))}")
+    # print(f"Debug: session verified_on: {session[2]}")
 
     if not session:
         print(
@@ -191,21 +213,21 @@ def validate_session(username):
         )
         sys.exit(1)
 
-    if session["vpn_client"] != vpn_client:
+    if session[0] != vpn_client:
         print(
-            f'>> Renegotiation forbidden. User {username} is using the different VPN client: old {session["vpn_client"]}, new {vpn_client}.'
+            f">> Renegotiation forbidden. User {username} is using a different VPN client: old {session[0]}, new {vpn_client}."
         )
         sys.exit(1)
 
-    if session["verified_on"] < now - datetime.timedelta(hours=SESSION_DURATION):
+    if session[2] < (now - datetime.timedelta(hours=SESSION_DURATION)):
         print(
-            f'>> Renegotiation forbidden. TOTP session for user {username} has been expired on {session["verified_on"].strftime("%Y-%m-%dT%H:%M:%SZ")}.'
+            f'>> Renegotiation forbidden. TOTP session for user {username} expired on {session[2].strftime("%Y-%m-%dT%H:%M:%SZ")}.'
         )
         sys.exit(1)
 
-    if session["ip_address"] != current_ip:
+    if session[1] != current_ip:
         print(
-            f'>> Renegotiation forbidden. User {username} is coming from different IP: {current_ip}, previous: {session["ip_address"]}'
+            f">> Renegotiation forbidden. User {username} is coming from different IP: {current_ip}, previous: {session[1]}"
         )
         sys.exit(1)
 
@@ -215,6 +237,7 @@ def validate_session(username):
     print(
         f">> Validated TOTP session for user {username} from {current_ip} using {vpn_client}."
     )
+    sys.exit(0)
 
 
 def get_sessiondb_cursor():
@@ -500,4 +523,3 @@ if __name__ == "__main__":
     elif args.listusers:
         listusers()
     sys.exit(99)
-
