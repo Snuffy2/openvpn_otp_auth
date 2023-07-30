@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """OpenVPN OTP auth script.
-Version: v1.1
+Version: v1.2
 
 Author: @Snuffy2
 Initial Author: @roman-vynar
@@ -14,20 +14,25 @@ import configparser
 import datetime
 import hashlib
 import os
+import pwd
 import sqlite3
 import subprocess
 import sys
 
+import argon2
 import pyotp
+from getpass_asterisk.getpass_asterisk import getpass_asterisk
 
+ph = argon2.PasswordHasher()
 parser = argparse.ArgumentParser(
     description=f"""OpenVPN python authentication script with password and multi-factor authentication (MFA) [TOTP] for use with auth-user-pass-verify via-file option.\n
+Current path: {os.path.dirname(os.path.abspath(__file__))}
 Installation:
-1. Place the {os.path.basename(__file__)} script in a location that ideally wont be removed by system updates (ex. /etc/config/ovpnauth).
-2. Run: 'python {os.path.basename(__file__)} --install' to build the config file {os.path.realpath(__file__).split('.')[0]}.conf in the same folder as the python script.
+1. Place the {os.path.basename(__file__)} script in a location that ideally wont be removed by system updates (ex. /etc/config/openvpn_otp_auth).
+2. Run: 'python {os.path.basename(__file__)} --install' to build the config file {os.path.basename(__file__).split('.')[0]}.conf in the same folder as the python script.
 3. Review the Config file and make any neccesary changes making sure the locations are correct and the issuer name is set.\n
-Example server.ovpn lines:\n\tauth-user-pass-verify {os.path.realpath(__file__)} via-file\n\tauth-gen-token 0 external-auth\n\n""",
-    epilog="Put the username or password in quotes if getting errors with not enough arguments. When new users are created or TOTP is changed, the TOTP QR Code and URL will display and also be saved to a file called <name>.totp",
+Example server.ovpn lines:\n\tauth-user-pass-verify /etc/config/openvpn_otp_auth/{os.path.basename(__file__)} via-file\n\tauth-gen-token 0 external-auth\n\n""",
+    epilog="Put the username in quotes if getting errors with not enough or too many arguments. When new users are created or TOTP is changed, the TOTP QR Code and URL will display and also be saved to a file called <name>.totp",
     formatter_class=argparse.RawDescriptionHelpFormatter,
 )
 
@@ -44,8 +49,8 @@ ovpnauth.add_argument(
     "--adduser",
     help="Add a new user",
     type=str,
-    nargs=2,
-    metavar=("<username>", "<password>"),
+    nargs=1,
+    metavar=("<username>"),
 )
 ovpnauth.add_argument(
     "--deluser",
@@ -58,8 +63,8 @@ ovpnauth.add_argument(
     "--changepass",
     help="Change the password for an existing user",
     type=str,
-    nargs=2,
-    metavar=("<username>", "<new_password>"),
+    nargs=1,
+    metavar=("<username>"),
 )
 ovpnauth.add_argument(
     "--changetotp",
@@ -85,13 +90,16 @@ USER_DB_SCHEMA = "CREATE TABLE users (username VARCHAR PRIMARY KEY, password_has
 
 def main():
     """Main func."""
-    # print(f"Debug: UserID: {os.geteuid()}")
+    print(
+        f">> Running {os.path.basename(__file__)} as User: {pwd.getpwuid(os.geteuid()).pw_name} [{os.geteuid()}]"
+    )
     # First arg is a tmp file with 2 lines: username and password
     with open(sys.argv[1], "r") as tmpfile:
         username = tmpfile.readline().rstrip("\n")
         password = tmpfile.readline().rstrip("\n")
 
     user = get_user(username)
+    # user: 0=username, 1=password_hash, 2=totp_secret, 3=totp_uri
     if not user:
         print(f">> No account for user: {username}")
         sys.exit(1)
@@ -103,9 +111,9 @@ def main():
     # print(f"Debug: session_id: {session_id}")
     if session_state is None or session_state == "Initial":
         # Initial connect or full re-connect phase.
+        # print(f"Debug: Encoded: full password string: {password}")
         password_data = password.split(":")
         if password.startswith("SCRV1:") and len(password_data) == 3:
-
             # print(f"Debug: Encoded: password: {password_data[1]}, otp: {password_data[2]}")
             try:
                 entered_pass = base64.b64decode(password_data[1]).decode()
@@ -117,12 +125,29 @@ def main():
                 sys.exit(1)
             # print(f"Debug: Decoded: password: {entered_pass}")
 
-            entered_pass_hash = pass_hash(entered_pass)
-            # print(f"Debug: entered_pass_hash: {entered_pass_hash}")
-            # Verify password.
-            if entered_pass_hash != user[1]:
-                print(f">> Wrong password for user: {username}")
-                sys.exit(1)
+            # Verify password, raises exception if wrong.
+            try:
+                ph.verify(user[1], entered_pass)
+            except (
+                argon2.exceptions.VerifyMismatchError,
+                argon2.exceptions.VerificationError,
+                argon2.exceptions.InvalidHash,
+            ) as e:
+                entered_legacy_pass_hash = legacy_pass_hash(entered_pass)
+                # print(f"Debug: entered_legacy_pass_hash: {entered_legacy_pass_hash}")
+                if entered_legacy_pass_hash != user[1]:
+                    print(f">> Wrong password for user: {username}. Error: {e}")
+                    sys.exit(1)
+                else:
+                    # Move from legacy sha256 to argon2 hash
+                    update_hash_for_user(username, ph.hash(entered_pass))
+            else:
+                # print("Debug: Password Correct")
+                # Now that we have the cleartext password,
+                # check the hash's parameters and if outdated,
+                # rehash the user's password in the database.
+                if ph.check_needs_rehash(user[1]):
+                    update_hash_for_user(username, ph.hash(entered_pass))
 
             try:
                 entered_otp = base64.b64decode(password_data[2]).decode()
@@ -134,7 +159,6 @@ def main():
                 sys.exit(1)
             # print(f"Debug: Decoded: otp: {entered_otp}")
 
-            # Verify OTP, no matter if we have a valid OTP user session as the user is prompted for OTP anyway.
             if not verify_totp(user[2], entered_otp):
                 print(f">> Wrong TOTP for user: {username}")
                 sys.exit(1)
@@ -159,8 +183,19 @@ def main():
         sys.exit(1)
 
 
-def pass_hash(password):
+def legacy_pass_hash(password):
     return hashlib.sha256(f"{password}.{ISSUER}".encode("utf-8")).hexdigest()
+
+
+def update_hash_for_user(username, new_hash):
+    # print(f"Debug: New Password Hash: {new_hash}")
+    print(f">> Rehashing password for user: {username}")
+    userdb, usercursor = get_userdb_cursor()
+    usercursor.execute(
+        "UPDATE users SET password_hash = ? WHERE username = ?",
+        (new_hash, username),
+    )
+    userdb.commit()
 
 
 def verify_totp(secret, otp):
@@ -308,19 +343,24 @@ def get_userdb_cursor():
 
 def adduser():
     new_user = args.adduser[0]
-    new_pass = args.adduser[1]
-    # print(f"Debug: Username: {new_user} / Password: {new_pass}")
     if check_user(new_user):
         print(f"User Already Exists: {new_user}")
         sys.exit(99)
+    new_pass = getpass_asterisk("Enter password: ")
+    pass_conf = getpass_asterisk("Confirm password: ")
+    if new_pass != pass_conf:
+        print(f"Passwords don't match. Account not created for: {new_user}")
+        sys.exit(99)
+    # print(f"Debug: Username: {new_user} / Password: {new_pass}")
     totp_secret = pyotp.random_base32()
     totp_uri = pyotp.totp.TOTP(totp_secret).provisioning_uri(
         name=new_user, issuer_name=ISSUER
     )
     userdb, usercursor = get_userdb_cursor()
+    # print(f"Debug: Password Hash: {ph.hash(new_pass)}")
     usercursor.execute(
         "INSERT INTO users (username, password_hash, totp_secret, totp_uri) VALUES (?,?,?,?)",
-        (new_user, pass_hash(new_pass), totp_secret, totp_uri),
+        (new_user, ph.hash(new_pass), totp_secret, totp_uri),
     )
     userdb.commit()
     if check_user(new_user):
@@ -365,16 +405,20 @@ def deluser():
 
 def changepass():
     user = args.changepass[0]
-    new_pass = args.changepass[1]
-    # print(f"Debug: Username: {user} / New Password: {new_pass}")
     if not check_user(user):
         print(f"User Doesn't Exist: {user}")
         sys.exit(99)
-    # print(f"Debug: New Password Hash: {pass_hash(new_pass)}")
+    new_pass = getpass_asterisk("Enter password: ")
+    pass_conf = getpass_asterisk("Confirm password: ")
+    if new_pass != pass_conf:
+        print(f"Passwords don't match. Password not changed for: {user}")
+        sys.exit(99)
+    # print(f"Debug: Username: {user} / New Password: {new_pass}")
+    # print(f"Debug: New Password Hash: {ph.hash(new_pass)}")
     userdb, usercursor = get_userdb_cursor()
     usercursor.execute(
         "UPDATE users SET password_hash = ? WHERE username = ?",
-        (pass_hash(new_pass), user),
+        (ph.hash(new_pass), user),
     )
     userdb.commit()
     print(f"Password Updated: {user}")
@@ -434,6 +478,7 @@ def listusers():
 
 def load_config():
     global ISSUER
+    # global RUNAS_USERID
     global TOTP_OUT_PATH
     global SESSION_DURATION
     global USER_DB_FILE
@@ -444,16 +489,22 @@ def load_config():
     try:
         ovpnauth_conf = config["OpenVPN Auth"]
     except KeyError:
-        print(">> Config file not found. Using Defaults.")
-        ISSUER = "OVPNAuth Issuer"
-        TOTP_OUT_PATH = "/etc/config/ovpnauth"
-        SESSION_DURATION = 164
-        USER_DB_FILE = "/etc/config/ovpnauth/users.db"
-        SESSION_DB_FILE = "/etc/config/ovpnauth/sessions.db"
+        print(
+            f">> Config file not found. You must run 'python {os.path.basename(__file__)} --install' before running the script."
+        )
+        sys.exit(1)
     else:
         ISSUER = ovpnauth_conf.get("ISSUER", "OVPNAuth Issuer").strip('"').strip("'")
+        # if ovpnauth_conf.getint("RUNAS_USERID") is None:
+        #    print(
+        #        f">> RUNAS_USERID Missing from Config: {os.path.realpath(__file__).split('.')[0]}.conf"
+        #    )
+        #    sys.exit(1)
+        # RUNAS_USERID = ovpnauth_conf.getint("RUNAS_USERID")
         TOTP_OUT_PATH = (
-            ovpnauth_conf.get("TOTP_OUT_PATH", "/etc/config/ovpnauth")
+            ovpnauth_conf.get(
+                "TOTP_OUT_PATH", f"{os.path.dirname(os.path.abspath(__file__))}"
+            )
             .strip('"')
             .strip("'")
         )
@@ -461,12 +512,17 @@ def load_config():
             "SESSION_DURATION", 164
         )  # hours (1 week)
         USER_DB_FILE = (
-            ovpnauth_conf.get("USER_DB_FILE", "/etc/config/ovpnauth/users.db")
+            ovpnauth_conf.get(
+                "USER_DB_FILE", f"{os.path.dirname(os.path.abspath(__file__))}/users.db"
+            )
             .strip('"')
             .strip("'")
         )
         SESSION_DB_FILE = (
-            ovpnauth_conf.get("SESSION_DB_FILE", "/etc/config/ovpnauth/sessions.db")
+            ovpnauth_conf.get(
+                "SESSION_DB_FILE",
+                f"{os.path.dirname(os.path.abspath(__file__))}/sessions.db",
+            )
             .strip('"')
             .strip("'")
         )
@@ -477,10 +533,19 @@ def install():
     if os.path.isfile(file_path):
         print(f"Config file aready exists: {file_path}")
     else:
+        ISSUER = "OVPNAuth Issuer"
+        # RUNAS_USERID = os.geteuid()
+        TOTP_OUT_PATH = f"{os.path.dirname(os.path.abspath(__file__))}"
+        SESSION_DURATION = 164
+        USER_DB_FILE = f"{os.path.dirname(os.path.abspath(__file__))}/users.db"
+        SESSION_DB_FILE = f"{os.path.dirname(os.path.abspath(__file__))}/sessions.db"
         config = configparser.ConfigParser(allow_no_value=True)
         config["OpenVPN Auth"] = {
             "; Set to your business name or name of your VPN": None,
             "ISSUER": f"{ISSUER}",
+            # "; The same user that is used to validate the passwords, must generate them.": None,
+            # "; If this is changed, all account passwords must be regenerated.": None,
+            # "RUNAS_USERID": RUNAS_USERID,
             "; Where the TOTP QR Code files are saved to": None,
             "TOTP_OUT_PATH": f"{TOTP_OUT_PATH}",
             "; Number of hours before requiring new TOTP if nothing else changes": None,
@@ -495,11 +560,18 @@ def install():
 
 
 if __name__ == "__main__":
+    if args.install:
+        install()
     load_config()
+    # if os.geteuid() != RUNAS_USERID:
+    #    print(
+    #        f">> The User running the script ({pwd.getpwuid(os.geteuid()).pw_name} [{os.geteuid()}]) is different than "
+    #        + f"the one that generated the accounts ({pwd.getpwuid(RUNAS_USERID).pw_name} [{RUNAS_USERID}]). "
+    #        + "Password hashes will not match. Exiting."
+    #    )
+    #    sys.exit(1)
     if args.filename:
         main()
-    elif args.install:
-        install()
     elif args.adduser:
         adduser()
     elif args.deluser:
