@@ -1,6 +1,8 @@
 # OpenVPN TOTP Auth Python Script
 
-Validates OpenVPN username/password/TOTP from file passed as the first arg when called using auth-user-pass-verify. TOTP/2FA/MFA uses Google Authenticator (or Authenticator-supporting third-party applications). User management is done from the CLI and stores users credentials and sessions in SQLite DBs.
+* Validates OpenVPN username/password/TOTP from file passed as the first arg when called from OpenVPN server using auth-user-pass-verify. 
+* TOTP (aka. 2FA, MFA) uses Google Authenticator (or Authenticator-supporting third-party applications).
+* User management is done from the CLI and stores users credentials and sessions in SQLite DBs.
 
 ## Use cases
 1. Initial connect or after manual disconnect - a new OTP session record is created.
