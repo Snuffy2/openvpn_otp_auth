@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """OpenVPN OTP auth script.
-Version: v1.2
+Version: v1.2.1
 
 Author: @Snuffy2
 Initial Author: @roman-vynar
@@ -477,14 +477,14 @@ def load_config():
     config = configparser.ConfigParser()
     config.read(file_path)
     try:
-        ovpnauth_conf = config["OpenVPN Auth"]
+        ovpnauth_conf = config["OpenVPN OTP Auth"]
     except KeyError:
         print(
             f">> Config file not found. You must run 'python {os.path.basename(__file__)} --install' before running the script."
         )
         sys.exit(1)
     else:
-        ISSUER = ovpnauth_conf.get("ISSUER", "OVPNAuth Issuer").strip('"').strip("'")
+        ISSUER = ovpnauth_conf.get("ISSUER", "OpenVPN OTP Auth Issuer").strip('"').strip("'")
         TOTP_OUT_PATH = (
             ovpnauth_conf.get(
                 "TOTP_OUT_PATH", f"{os.path.dirname(os.path.abspath(__file__))}"
@@ -517,14 +517,14 @@ def install():
     if os.path.isfile(file_path):
         print(f"Config file aready exists: {file_path}")
     else:
-        ISSUER = "OVPNAuth Issuer"
+        ISSUER = "OpenVPN OTP Auth Issuer"
         # RUNAS_USERID = os.geteuid()
         TOTP_OUT_PATH = f"{os.path.dirname(os.path.abspath(__file__))}"
         SESSION_DURATION = 164
         USER_DB_FILE = f"{os.path.dirname(os.path.abspath(__file__))}/users.db"
         SESSION_DB_FILE = f"{os.path.dirname(os.path.abspath(__file__))}/sessions.db"
         config = configparser.ConfigParser(allow_no_value=True)
-        config["OpenVPN Auth"] = {
+        config["OpenVPN OTP Auth"] = {
             "; Set to your business name or name of your VPN": None,
             "ISSUER": f"{ISSUER}",
             "; Where the TOTP QR Code files are saved to": None,
