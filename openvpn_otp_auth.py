@@ -106,9 +106,7 @@ def main():
     print(f">> Username: {username}")
     # print(f"Debug: User Db: {user}")
     session_state = os.environ.get("session_state")
-    # session_id = os.environ.get("session_id")
     # print(f"Debug: session_state: {session_state}")
-    # print(f"Debug: session_id: {session_id}")
     if session_state is None or session_state == "Initial":
         # Initial connect or full re-connect phase.
         # print(f"Debug: Encoded: full password string: {password}")
@@ -117,11 +115,8 @@ def main():
             # print(f"Debug: Encoded: password: {password_data[1]}, otp: {password_data[2]}")
             try:
                 entered_pass = base64.b64decode(password_data[1]).decode()
-            except base64.binascii.Error as e:
+            except (base64.binascii.Error, UnicodeDecodeError) as e:
                 print(f">> Invalid password for user: {username} [{e}]")
-                sys.exit(1)
-            except UnicodeDecodeError as e:
-                print(f">> Invalid password for user: {username}: [{e}]")
                 sys.exit(1)
             # print(f"Debug: Decoded: password: {entered_pass}")
 
@@ -209,8 +204,6 @@ def create_session(username):
     vpn_client = os.environ["IV_GUI_VER"]
     current_ip = os.environ["untrusted_ip"]
     created = datetime.datetime.now()
-
-    # Anything you want to do to create or update user session, e.g. write a record to sqlite db.
     store_session(username, vpn_client, current_ip, created)
     print(
         f">> New OTP session for user {username} from {current_ip} using {vpn_client}."
@@ -255,8 +248,6 @@ def validate_session(username):
             f">> Renegotiation forbidden. User {username} is coming from different IP: {current_ip}, previous: {session[1]}"
         )
         sys.exit(1)
-
-    # Anything you want to do to fail the script with sys.exit() when a user session is say expired, unknown IP etc.
 
     # All good.
     print(
@@ -478,7 +469,6 @@ def listusers():
 
 def load_config():
     global ISSUER
-    # global RUNAS_USERID
     global TOTP_OUT_PATH
     global SESSION_DURATION
     global USER_DB_FILE
@@ -495,12 +485,6 @@ def load_config():
         sys.exit(1)
     else:
         ISSUER = ovpnauth_conf.get("ISSUER", "OVPNAuth Issuer").strip('"').strip("'")
-        # if ovpnauth_conf.getint("RUNAS_USERID") is None:
-        #    print(
-        #        f">> RUNAS_USERID Missing from Config: {os.path.realpath(__file__).split('.')[0]}.conf"
-        #    )
-        #    sys.exit(1)
-        # RUNAS_USERID = ovpnauth_conf.getint("RUNAS_USERID")
         TOTP_OUT_PATH = (
             ovpnauth_conf.get(
                 "TOTP_OUT_PATH", f"{os.path.dirname(os.path.abspath(__file__))}"
@@ -543,9 +527,6 @@ def install():
         config["OpenVPN Auth"] = {
             "; Set to your business name or name of your VPN": None,
             "ISSUER": f"{ISSUER}",
-            # "; The same user that is used to validate the passwords, must generate them.": None,
-            # "; If this is changed, all account passwords must be regenerated.": None,
-            # "RUNAS_USERID": RUNAS_USERID,
             "; Where the TOTP QR Code files are saved to": None,
             "TOTP_OUT_PATH": f"{TOTP_OUT_PATH}",
             "; Number of hours before requiring new TOTP if nothing else changes": None,
@@ -563,13 +544,6 @@ if __name__ == "__main__":
     if args.install:
         install()
     load_config()
-    # if os.geteuid() != RUNAS_USERID:
-    #    print(
-    #        f">> The User running the script ({pwd.getpwuid(os.geteuid()).pw_name} [{os.geteuid()}]) is different than "
-    #        + f"the one that generated the accounts ({pwd.getpwuid(RUNAS_USERID).pw_name} [{RUNAS_USERID}]). "
-    #        + "Password hashes will not match. Exiting."
-    #    )
-    #    sys.exit(1)
     if args.filename:
         main()
     elif args.adduser:
