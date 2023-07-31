@@ -6,22 +6,22 @@
 
 ## Installation
 
-1. Place the openvpn_otp_auth.py script in a location that ideally wont be removed by system updates (ex. /etc/config/ovpnauth).
+1. Place the openvpn_otp_auth.py script in a location that ideally wont be removed by system updates (ex. /etc/config/openvpn_otp_auth).
 2. Run: `python openvpn_otp_auth.py --install` to build the config file `openvpn_otp_auth.conf` in the same folder as the python script.
 3. Review the Config file and make any neccesary changes making sure the locations are correct and the issuer name is set.
 
 <details><summary><h3>Default openvpn_otp_auth.conf (Created by running: python openvpn_otp_auth.py --install)</h3></summary>
 
 ```
-[OpenVPN Auth]
+[OpenVPN OTP Auth]
 ; set to your business name or name of your vpn
-issuer = OVPNAuth Issuer
+issuer = OpenVPN OTP Auth Issuer
 ; where the totp qr code files are saved to
-totp_out_path = /etc/config/ovpnauth
+totp_out_path = /etc/config/openvpn_otp_auth
 ; number of hours before requiring new totp if nothing else changes
 session_duration = 164
-user_db_file = /etc/config/ovpnauth/users.db
-session_db_file = /etc/config/ovpnauth/sessions.db
+user_db_file = /etc/config/openvpn_otp_auth/users.db
+session_db_file = /etc/config/openvpn_otp_auth/sessions.db
 ```
 
 </details>
@@ -45,7 +45,7 @@ persist-tun
 user openvpn
 group openvpn
 script-security 2
-auth-user-pass-verify /etc/config/ovpnauth/openvpn_otp_auth.py via-file
+auth-user-pass-verify /etc/config/openvpn_otp_auth/openvpn_otp_auth.py via-file
 auth-gen-token 0 external-auth
 reneg-sec 3600
 keepalive 10 60
@@ -92,16 +92,16 @@ Option | Description |
 -- | -- 
 -h, --help | Show help message and exit
 --install | Generate the config file with default values
---adduser \<username\> \<password\> | Add a new user
+--adduser \<username\> | Add a new user
 --deluser \<username\> | Delete an existing user
---changepass \<username\> \<new_password\> | Change the password for an existing user
+--changepass \<username\> | Change the password for an existing user
 --changetotp \<username\> | Generate a new TOTP for an existing user
 --showtotp \<username\> | Show the TOTP for an existing user
 --listusers | List all users
 
 ### Notes
 
-* Put the username or password in quotes if getting errors with not enough arguments. 
+* Put the username in quotes if getting errors with not enough or too many arguments. 
 * When new users are created or TOTP is changed, the TOTP QR Code and URL will display and also be saved to a file called \<username\>.totp
 
 ## Authors
