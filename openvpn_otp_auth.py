@@ -12,7 +12,6 @@ import argparse
 import base64
 import configparser
 import datetime
-import hashlib
 import os
 import pwd
 import sqlite3
@@ -128,14 +127,8 @@ def main():
                 argon2.exceptions.VerificationError,
                 argon2.exceptions.InvalidHash,
             ) as e:
-                entered_legacy_pass_hash = legacy_pass_hash(entered_pass)
-                # print(f"Debug: entered_legacy_pass_hash: {entered_legacy_pass_hash}")
-                if entered_legacy_pass_hash != user[1]:
-                    print(f">> Wrong password for user: {username}. Error: {e}")
-                    sys.exit(1)
-                else:
-                    # Move from legacy sha256 to argon2 hash
-                    update_hash_for_user(username, ph.hash(entered_pass))
+                print(f">> Wrong password for user: {username}. Error: {e}")
+                sys.exit(1)
             else:
                 # print("Debug: Password Correct")
                 # Now that we have the cleartext password,
@@ -176,10 +169,6 @@ def main():
             f">> Invalid auth-token for user: {username}. session_state: {session_state}"
         )
         sys.exit(1)
-
-
-def legacy_pass_hash(password):
-    return hashlib.sha256(f"{password}.{ISSUER}".encode("utf-8")).hexdigest()
 
 
 def update_hash_for_user(username, new_hash):
@@ -484,7 +473,9 @@ def load_config():
         )
         sys.exit(1)
     else:
-        ISSUER = ovpnauth_conf.get("ISSUER", "OpenVPN OTP Auth Issuer").strip('"').strip("'")
+        ISSUER = (
+            ovpnauth_conf.get("ISSUER", "OpenVPN OTP Auth Issuer").strip('"').strip("'")
+        )
         TOTP_OUT_PATH = (
             ovpnauth_conf.get(
                 "TOTP_OUT_PATH", f"{os.path.dirname(os.path.abspath(__file__))}"
