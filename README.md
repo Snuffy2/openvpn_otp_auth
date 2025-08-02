@@ -6,9 +6,9 @@
 
 ## Installation
 
-1. Place the openvpn_otp_auth.py script in a location that ideally wont be removed by system updates (ex. /etc/config/openvpn_otp_auth).
+1. Place the openvpn_otp_auth.py script in a location that ideally won't be removed by system updates (ex. /etc/config/openvpn_otp_auth).
 2. Run: `python openvpn_otp_auth.py --install` to build the config file `openvpn_otp_auth.conf` in the same folder as the python script.
-3. Review the Config file and make any neccesary changes making sure the locations are correct and the issuer name is set.
+3. Review the Config file and make any necessary changes making sure the locations are correct and the issuer name is set.
 
 <details><summary><h3>Default openvpn_otp_auth.conf (Created by running: python openvpn_otp_auth.py --install)</h3></summary>
 
