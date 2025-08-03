@@ -21,7 +21,7 @@ jobs:
             echo "github.event.release.prerelease: ${{ github.event.release.prerelease }}"
             echo "github.event.release.draft: ${{ github.event.release.draft }}"
 
-      - name: Update Version in const.py
+      - name: Update Version in script
         if: ${{ github.event_name == 'release' && github.event.release.draft == false }}
         run: |
           sed -i 's/^VERSION \= \".*\"/VERSION \= \"${{ github.event.release.tag_name }}\"/' ./openvpn_otp_auth.py
