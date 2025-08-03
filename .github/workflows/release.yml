@@ -1,0 +1,41 @@
+name: Update Version on Release
+on:
+  workflow_dispatch:
+  release:
+    types: [published, edited]
+
+jobs:
+  update_version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Debug Variables
+        run: |
+            echo "github.event_name: ${{ github.event_name }}"
+            echo "github.ref_name: ${{ github.ref_name }}"
+            echo "github.event.release.tag_name: ${{ github.event.release.tag_name }}"
+            echo "github.event.repository.default_branch: ${{ github.event.repository.default_branch }}"
+            echo "github.event.release.target_commitish: ${{ github.event.release.target_commitish }}"
+            echo "github.event.release.prerelease: ${{ github.event.release.prerelease }}"
+            echo "github.event.release.draft: ${{ github.event.release.draft }}"
+
+      - name: Update Version in script
+        if: ${{ github.event_name == 'release' && github.event.release.draft == false }}
+        run: |
+          sed -i 's/^VERSION \= \".*\"/VERSION \= \"${{ github.event.release.tag_name }}\"/' ./openvpn_otp_auth.py
+
+      - name: Commit & Push Version Changes
+        if: ${{ github.event_name == 'release' && github.event.release.draft == false && github.event.release.prerelease == false  }}
+        uses: actions-js/push@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ github.event.release.target_commitish }}
+          message: 'Updating to version ${{ github.event.release.tag_name }} [skip ci]'
+
+      - name: Update Release with Version Changes Commit
+        if: ${{ github.event_name == 'release' && github.event.release.draft == false && github.event.release.prerelease == false  }}
+        run: |
+          git tag -f ${{ github.event.release.tag_name }}
+          git push -f origin ${{ github.event.release.tag_name }}
