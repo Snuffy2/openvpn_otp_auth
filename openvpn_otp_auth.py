@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """OpenVPN OTP auth script.
 
-Version: v1.2.1
-
 Author: @Snuffy2
 Initial Author: @roman-vynar
 Expanded from: https://github.com/roman-vynar/random-scripts
@@ -28,7 +26,7 @@ import argon2
 from getpass_asterisk.getpass_asterisk import getpass_asterisk  # type: ignore[import-untyped]
 import pyotp
 
-VERSION = "v1.2.1"
+VERSION = "v1.3.0"
 
 # Main logger setup (stdout + file)
 logger = logging.getLogger(__name__)
