@@ -728,10 +728,10 @@ class OpenVPNOTPAuth:
         try:
             f = self._totp_file_path(del_user)
         except ValueError as e:
-            setup_logger.error("%s", e)
-            sys.exit(99)
-        with contextlib.suppress(FileNotFoundError):
-            f.unlink()
+            setup_logger.warning("%s. Skipping TOTP file deletion.", e)
+        else:
+            with contextlib.suppress(FileNotFoundError):
+                f.unlink()
         userdb, usercursor = self.get_userdb_cursor()
         usercursor.execute(
             "DELETE FROM users WHERE username=?",

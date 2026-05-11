@@ -102,16 +102,35 @@ def test_changetotp_rewrites_existing_totp_file_when_qr_generation_fails(
     assert "OLD QR CONTENT" not in totp_file.read_text()
 
 
-def test_deluser_rejects_path_traversal_username(
+def test_deluser_removes_legacy_path_traversal_username_without_unlinking_outside_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Usernames must not escape the configured TOTP output directory."""
+    """Legacy unsafe usernames should be removed without unsafe file deletion."""
     module = load_module(monkeypatch, ["openvpn_otp_auth.py", "--install"])
     auth = module.OpenVPNOTPAuth(argparse.Namespace(deluser=["../outside"]), install=True)
     auth.totp_out_path = str(tmp_path)
-    monkeypatch.setattr(auth, "check_user", lambda _username: True)
+    auth.user_db_file = str(tmp_path / "users.db")
+    auth.session_db_file = str(tmp_path / "sessions.db")
+    outside_file = tmp_path.parent / "outside.totp"
+    outside_file.write_text("do not delete")
+    userdb, usercursor = auth.get_userdb_cursor()
+    usercursor.execute(
+        "INSERT INTO users (username, password_hash, totp_secret, totp_uri) VALUES (?,?,?,?)",
+        ("../outside", "hash", "secret", "uri"),
+    )
+    userdb.commit()
+    userdb.close()
 
     with pytest.raises(SystemExit) as exc_info:
         auth.deluser()
 
     assert exc_info.value.code == 99
+    with sqlite3.connect(auth.user_db_file) as db:
+        assert (
+            db.execute(
+                "SELECT username FROM users WHERE username = ?",
+                ("../outside",),
+            ).fetchone()
+            is None
+        )
+    assert outside_file.read_text() == "do not delete"
