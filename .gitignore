@@ -17,6 +17,7 @@ __pypackages__/
 .Python
 .pytype/
 .ropeproject
+.ruff_cache/
 .scrapy
 .spyderproject
 .spyproject
