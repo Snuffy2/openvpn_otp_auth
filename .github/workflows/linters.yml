@@ -1,36 +1,22 @@
 name: Linters
-permissions:
-  contents: read
 
 on:
   pull_request:
+  push:
+    branches:
+      - main
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   linters:
     name: Run Linters
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v6
-      - name: Setup python
-        id: setup_python
-        uses: actions/setup-python@v6
-        with:
-          python-version: 3.x
-      - name: Cache pip dependencies
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-py${{ steps.setup_python.outputs.python-version }}-pip-${{ hashFiles('requirements-dev.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-      - name: Install requirements
-        run: pip install -r requirements-dev.txt
-      - name: Run pre-commit
-        uses: pre-commit/action@v3.0.1
-      - name: Run pre-commit.ci
-        uses: pre-commit-ci/lite-action@v1.1.0
-        if: always()
-      - name: Run mypy
-        run: mypy "." --install-types --non-interactive --config-file pyproject.toml
+
+      - name: Run prek
+        uses: j178/prek-action@v2
