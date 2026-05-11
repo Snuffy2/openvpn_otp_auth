@@ -66,14 +66,25 @@ setup_logger.addHandler(setup_stdout_handler)
 setup_logger.propagate = False
 
 parser = argparse.ArgumentParser(
-    description=f"""OpenVPN python authentication script with password and multi-factor authentication (MFA) [TOTP] for use with auth-user-pass-verify via-file option.\n
+    description=f"""OpenVPN python authentication script with password and
+multi-factor authentication (MFA) [TOTP] for use with auth-user-pass-verify
+via-file option.\n
 Current path: {Path(__file__).resolve().parent}
 Installation:
-1. Place the {Path(__file__).name} script in a location that ideally wont be removed by system updates (ex. /etc/config/openvpn_otp_auth).
-2. Run: 'python {Path(__file__).name} --install' to build the config file {Path(__file__).stem}.conf in the same folder as the python script.
-3. Review the Config file and make any neccesary changes making sure the locations are correct and the issuer name is set.\n
-Example server.ovpn lines:\n\tauth-user-pass-verify /etc/config/openvpn_otp_auth/{Path(__file__).name} via-file\n\tauth-gen-token 0 external-auth\n\n""",
-    epilog="Put the username in quotes if getting errors with not enough or too many arguments. When new users are created or TOTP is changed, the TOTP QR Code and URL will display and also be saved to a file called <name>.totp",
+1. Place the {Path(__file__).name} script in a location that ideally won't be
+   removed by system updates (ex. /etc/config/openvpn_otp_auth).
+2. Run: 'python {Path(__file__).name} --install' to build the config file
+   {Path(__file__).stem}.conf in the same folder as the python script.
+3. Review the Config file and make any necessary changes making sure the
+   locations are correct and the issuer name is set.\n
+Example server.ovpn lines:
+\tauth-user-pass-verify /etc/config/openvpn_otp_auth/{Path(__file__).name} via-file
+\tauth-gen-token 0 external-auth\n\n""",
+    epilog=(
+        "Put the username in quotes if getting errors with not enough or too many "
+        "arguments. When new users are created or TOTP is changed, the TOTP QR Code "
+        "and URL will display and also be saved to a file called <name>.totp"
+    ),
     formatter_class=argparse.RawDescriptionHelpFormatter,
 )
 
@@ -140,8 +151,14 @@ if args.debug:
 
 # print(f"Debug: args: {args}")
 
-SESSION_DB_SCHEMA = "CREATE TABLE sessions (username VARCHAR PRIMARY KEY, vpn_client VARCHAR, ip_address VARCHAR, verified_on TIMESTAMP)"
-USER_DB_SCHEMA = "CREATE TABLE users (username VARCHAR PRIMARY KEY, password_hash VARCHAR, totp_secret VARCHAR, totp_uri VARCHAR)"
+SESSION_DB_SCHEMA = (
+    "CREATE TABLE sessions (username VARCHAR PRIMARY KEY, vpn_client VARCHAR, "
+    "ip_address VARCHAR, verified_on TIMESTAMP)"
+)
+USER_DB_SCHEMA = (
+    "CREATE TABLE users (username VARCHAR PRIMARY KEY, password_hash VARCHAR, "
+    "totp_secret VARCHAR, totp_uri VARCHAR)"
+)
 
 
 class OpenVPNOTPAuth:
@@ -166,9 +183,10 @@ class OpenVPNOTPAuth:
         """Load configuration settings from the config file.
 
         Reads the configuration file and sets instance variables for issuer, TOTP output path,
-        session duration, user database file, and session database file. Exits if the config file is missing.
+        session duration, user database file, and session database file.
+        Exits if the config file is missing.
 
-        Raises
+        Raises:
         ------
         SystemExit
             If the configuration file is not found.
@@ -181,7 +199,8 @@ class OpenVPNOTPAuth:
             ovpnauth_conf = config["OpenVPN OTP Auth"]
         except KeyError:
             logger.error(
-                "Config file not found. You must run 'python %s --install' before running the script.",
+                "Config file not found. You must run 'python %s --install' before "
+                "running the script.",
                 Path(__file__).name,
             )
             sys.exit(1)
@@ -203,7 +222,7 @@ class OpenVPNOTPAuth:
     def _get_db_cursor(
         self, db_file: str, schema: str
     ) -> tuple[sqlite3.Connection, sqlite3.Cursor]:
-        """Get a database connection and cursor, creating the database with the given schema if it does not exist.
+        """Get a database cursor, creating the database if it does not exist.
 
         Parameters
         ----------
@@ -212,18 +231,17 @@ class OpenVPNOTPAuth:
         schema : str
             SQL schema to create the database if it does not exist.
 
-        Returns
+        Returns:
         -------
         tuple
             A tuple containing the sqlite3.Connection and sqlite3.Cursor objects.
 
-        Raises
+        Raises:
         ------
         ValueError
             If the database file path is not set in configuration.
 
         """
-
         if not db_file:
             raise ValueError("Database file path is not set in configuration.")
 
@@ -249,10 +267,11 @@ class OpenVPNOTPAuth:
     def get_sessiondb_cursor(self) -> tuple[sqlite3.Connection, sqlite3.Cursor]:
         """Get a cursor and connection to the session database, creating it if necessary.
 
-        Returns
+        Returns:
         -------
         tuple
-            A tuple containing the sqlite3.Connection and sqlite3.Cursor objects for the session database.
+            A tuple containing the sqlite3.Connection and sqlite3.Cursor objects for
+            the session database.
 
         """
         return self._get_db_cursor(self.session_db_file, SESSION_DB_SCHEMA)
@@ -260,10 +279,11 @@ class OpenVPNOTPAuth:
     def get_userdb_cursor(self) -> tuple[sqlite3.Connection, sqlite3.Cursor]:
         """Get a cursor and connection to the user database, creating it if necessary.
 
-        Returns
+        Returns:
         -------
         tuple
-            A tuple containing the sqlite3.Connection and sqlite3.Cursor objects for the user database.
+            A tuple containing the sqlite3.Connection and sqlite3.Cursor objects for
+            the user database.
 
         """
         return self._get_db_cursor(self.user_db_file, USER_DB_SCHEMA)
@@ -276,10 +296,11 @@ class OpenVPNOTPAuth:
         username : str
             The username to look up.
 
-        Returns
+        Returns:
         -------
         tuple or None
-            Returns a tuple (username, password_hash, totp_secret, totp_uri) if the user exists, otherwise None.
+            Returns a tuple (username, password_hash, totp_secret, totp_uri) if the
+            user exists, otherwise None.
 
         """
         _, usercursor = self.get_userdb_cursor()
@@ -297,7 +318,7 @@ class OpenVPNOTPAuth:
         username : str
             The username to check.
 
-        Returns
+        Returns:
         -------
         bool
             True if the user exists, False otherwise.
@@ -343,7 +364,7 @@ class OpenVPNOTPAuth:
         otp : str
             The one-time password to verify.
 
-        Returns
+        Returns:
         -------
         bool
             True if the OTP is valid, False otherwise.
@@ -368,14 +389,15 @@ class OpenVPNOTPAuth:
         created : datetime.datetime
             The timestamp when the session was created or verified.
 
-        Returns
+        Returns:
         -------
         None
 
         """
         sessiondb, sessioncursor = self.get_sessiondb_cursor()
         sessioncursor.execute(
-            "REPLACE INTO sessions (username, vpn_client, ip_address, verified_on) VALUES (?,?,?,?)",
+            "REPLACE INTO sessions (username, vpn_client, ip_address, verified_on) "
+            "VALUES (?,?,?,?)",
             (username, vpn_client, current_ip, created),
         )
         sessiondb.commit()
@@ -388,10 +410,11 @@ class OpenVPNOTPAuth:
         username : str
             The username to look up.
 
-        Returns
+        Returns:
         -------
         tuple or None
-            Returns a tuple (vpn_client, ip_address, verified_on) if the session exists, otherwise None.
+            Returns a tuple (vpn_client, ip_address, verified_on) if the session
+            exists, otherwise None.
 
         """
         _, sessioncursor = self.get_sessiondb_cursor()
@@ -407,7 +430,7 @@ class OpenVPNOTPAuth:
         Reads username and password from the provided file, verifies credentials and TOTP,
         manages session creation and validation, and handles authentication states.
 
-        Raises
+        Raises:
         ------
         SystemExit
             Exits with code 0 for successful authentication, 1 for authentication errors,
@@ -481,7 +504,7 @@ class OpenVPNOTPAuth:
         username : str
             The username for whom to create the session.
 
-        Returns
+        Returns:
         -------
         None
 
@@ -491,7 +514,8 @@ class OpenVPNOTPAuth:
         created = datetime.datetime.now()
         if vpn_client is None or current_ip is None:
             logger.error(
-                "VPN client or IP address not found in environment variables. Cannot create session for user: %s",
+                "VPN client or IP address not found in environment variables. "
+                "Cannot create session for user: %s",
                 username,
             )
             sys.exit(1)
@@ -508,7 +532,7 @@ class OpenVPNOTPAuth:
         username : str
             The username whose session is to be validated.
 
-        Raises
+        Raises:
         ------
         SystemExit
             Exits with code 0 for successful validation, or 1 for validation errors.
@@ -557,7 +581,7 @@ class OpenVPNOTPAuth:
     def install(self) -> None:
         """Create a default configuration file for OpenVPN OTP Auth if it does not exist.
 
-        Raises
+        Raises:
         ------
         SystemExit
             Exits with code 99 after creating or detecting the config file.
@@ -567,21 +591,21 @@ class OpenVPNOTPAuth:
         if Path(file_path).is_file():
             setup_logger.info("Config file already exists: %s", file_path)
         else:
-            ISSUER = "OpenVPN OTP Auth Issuer"
-            TOTP_OUT_PATH = f"{Path(__file__).resolve().parent}"
-            SESSION_DURATION = "164"
-            USER_DB_FILE = f"{Path(__file__).resolve().parent}/users.db"
-            SESSION_DB_FILE = f"{Path(__file__).resolve().parent}/sessions.db"
+            issuer = "OpenVPN OTP Auth Issuer"
+            totp_out_path = f"{Path(__file__).resolve().parent}"
+            session_duration = "164"
+            user_db_file = f"{Path(__file__).resolve().parent}/users.db"
+            session_db_file = f"{Path(__file__).resolve().parent}/sessions.db"
             config = configparser.ConfigParser(allow_no_value=True)
             config["OpenVPN OTP Auth"] = {
                 "; Set to your business name or name of your VPN": "",
-                "ISSUER": f"{ISSUER}",
+                "ISSUER": f"{issuer}",
                 "; Where the TOTP QR Code files are saved to": "",
-                "TOTP_OUT_PATH": f"{TOTP_OUT_PATH}",
+                "TOTP_OUT_PATH": f"{totp_out_path}",
                 "; Number of hours before requiring new TOTP if nothing else changes": "",
-                "SESSION_DURATION": SESSION_DURATION,
-                "USER_DB_FILE": f"{USER_DB_FILE}",
-                "SESSION_DB_FILE": f"{SESSION_DB_FILE}",
+                "SESSION_DURATION": session_duration,
+                "USER_DB_FILE": f"{user_db_file}",
+                "SESSION_DB_FILE": f"{session_db_file}",
             }
             with Path(f"{file_path}").open("w") as configfile:
                 config.write(configfile)
@@ -594,7 +618,7 @@ class OpenVPNOTPAuth:
         Prompts for password, generates TOTP secret and URI, saves user to database,
         creates QR code for TOTP, and logs the result.
 
-        Raises
+        Raises:
         ------
         SystemExit
             Exits with code 99 after user creation or error.
@@ -654,7 +678,7 @@ class OpenVPNOTPAuth:
         Removes the user from the database and deletes their TOTP file.
         Logs the result and exits with code 99.
 
-        Raises
+        Raises:
         ------
         SystemExit
             Exits with code 99 after user deletion or error.
@@ -685,7 +709,7 @@ class OpenVPNOTPAuth:
         Prompts for a new password and confirmation, updates the password hash in the database,
         logs the result, and exits with code 99.
 
-        Raises
+        Raises:
         ------
         SystemExit
             Exits with code 99 after password change or error.
@@ -715,7 +739,7 @@ class OpenVPNOTPAuth:
         Generates a new TOTP secret and URI, updates the user in the database,
         creates a new QR code for the TOTP, and logs the result.
 
-        Raises
+        Raises:
         ------
         SystemExit
             Exits with code 99 after TOTP change or error.
@@ -757,7 +781,7 @@ class OpenVPNOTPAuth:
 
         Logs the contents of the user's TOTP file and exits with code 99.
 
-        Raises
+        Raises:
         ------
         SystemExit
             Exits with code 99 if the user does not exist or after displaying the TOTP.
@@ -777,13 +801,14 @@ class OpenVPNOTPAuth:
     def listusers(self) -> None:
         """List all users in the authentication system.
 
-        Retrieves all usernames from the database, logs the count and each username, and exits with code 99.
+        Retrieves all usernames from the database, logs the count and each username,
+        and exits with code 99.
 
-        Returns
+        Returns:
         -------
         None
 
-        Raises
+        Raises:
         ------
         SystemExit
             Exits with code 99 after listing users.
