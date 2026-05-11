@@ -789,14 +789,14 @@ class OpenVPNOTPAuth:
 
         """
         user = self.args.changetotp[0]
-        try:
-            totp_file = self._totp_file_path(user)
-        except ValueError as e:
-            setup_logger.error("%s", e)
-            sys.exit(99)
         if not self.check_user(user):
             setup_logger.error("User Doesn't Exist: %s", user)
             sys.exit(99)
+        try:
+            totp_file = self._totp_file_path(user)
+        except ValueError as e:
+            setup_logger.warning("%s. Skipping TOTP file update.", e)
+            totp_file = None
         totp_secret = pyotp.random_base32()
         totp_uri = pyotp.totp.TOTP(totp_secret).provisioning_uri(name=user, issuer_name=self.issuer)
         userdb, usercursor = self.get_userdb_cursor()
@@ -807,9 +807,12 @@ class OpenVPNOTPAuth:
         userdb.commit()
         userdb.close()
         setup_logger.info("TOTP Updated: %s", user)
-        self._write_totp_file(user, totp_uri)
-        with totp_file.open() as f:
-            setup_logger.info(f.read())
+        if totp_file is None:
+            setup_logger.info(totp_uri)
+        else:
+            self._write_totp_file(user, totp_uri)
+            with totp_file.open() as f:
+                setup_logger.info(f.read())
         sys.exit(99)
 
     def showtotp(self) -> None:

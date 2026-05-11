@@ -134,3 +134,40 @@ def test_deluser_removes_legacy_path_traversal_username_without_unlinking_outsid
             is None
         )
     assert outside_file.read_text() == "do not delete"
+
+
+def test_changetotp_updates_legacy_path_traversal_username_without_writing_outside_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Legacy unsafe usernames should get new TOTP secrets without unsafe file writes."""
+    module = load_module(monkeypatch, ["openvpn_otp_auth.py", "--install"])
+    auth = module.OpenVPNOTPAuth(argparse.Namespace(changetotp=["../outside"]), install=True)
+    auth.issuer = "Test VPN"
+    auth.totp_out_path = str(tmp_path)
+    auth.user_db_file = str(tmp_path / "users.db")
+    auth.session_db_file = str(tmp_path / "sessions.db")
+    outside_file = tmp_path.parent / "outside.totp"
+    outside_file.write_text("do not overwrite")
+    userdb, usercursor = auth.get_userdb_cursor()
+    usercursor.execute(
+        "INSERT INTO users (username, password_hash, totp_secret, totp_uri) VALUES (?,?,?,?)",
+        ("../outside", "hash", "old-secret", "old-uri"),
+    )
+    userdb.commit()
+    userdb.close()
+    monkeypatch.setattr(module.pyotp, "random_base32", lambda: "JBSWY3DPEHPK3PXP")
+
+    with pytest.raises(SystemExit) as exc_info:
+        auth.changetotp()
+
+    assert exc_info.value.code == 99
+    stdout = capsys.readouterr().out
+    with sqlite3.connect(auth.user_db_file) as db:
+        totp_secret, totp_uri = db.execute(
+            "SELECT totp_secret, totp_uri FROM users WHERE username = ?",
+            ("../outside",),
+        ).fetchone()
+    assert totp_secret in totp_uri
+    assert totp_uri != "old-uri"
+    assert outside_file.read_text() == "do not overwrite"
+    assert totp_uri in stdout
