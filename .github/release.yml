@@ -29,7 +29,7 @@ changelog:
     - title: "🧰 Maintenance"
       labels:
         - chore
-        - github_actions
+        - github-workflows
     - title: "Other Changes"
       labels:
         - "*"
