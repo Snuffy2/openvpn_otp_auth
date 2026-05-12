@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
 import logging
 from pathlib import Path
@@ -179,3 +180,25 @@ def test_changetotp_updates_legacy_path_traversal_username_without_writing_outsi
     assert totp_uri != "old-uri"
     assert outside_file.read_text() == "do not overwrite"
     assert totp_uri in stdout
+
+
+def test_get_db_cursor_creates_schema(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Database cursor helper should create missing SQLite files with the schema."""
+    module = load_module(monkeypatch, ["openvpn_otp_auth.py", "--install"])
+    auth = module.OpenVPNOTPAuth(module.args, install=True)
+    db_path = tmp_path / "users.db"
+    auth.user_db_file = str(db_path)
+
+    db, cursor = auth.get_userdb_cursor()
+    try:
+        cursor.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'")
+        assert cursor.fetchone() == ("users",)
+    finally:
+        db.close()
+
+    with contextlib.closing(sqlite3.connect(db_path)) as verify_db:
+        verify_cursor = verify_db.execute("SELECT COUNT(*) FROM users")
+        try:
+            assert verify_cursor.fetchone() == (0,)
+        finally:
+            verify_cursor.close()

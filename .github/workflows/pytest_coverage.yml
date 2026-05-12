@@ -13,7 +13,7 @@ permissions:
 jobs:
   pull-request-tests:
     name: pytest and coverage report
-    if: ${{ github.event_name == 'pull_request' && !(contains(github.event.pull_request.labels.*.name, 'dependencies') || github.event.pull_request.user.type == 'Bot') }}
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,7 +40,7 @@ jobs:
 
       - name: 'Generate coverage Comment (and possibly Post to PR)'
         id: coverage_comment
-        uses: py-cov-action/python-coverage-comment-action@v3
+        uses: py-cov-action/python-coverage-comment-action@53ff7553078bad69030786e486677315346c2dd2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MINIMUM_GREEN: 90
@@ -84,7 +84,7 @@ jobs:
         run: pytest
 
       - name: Update coverage baseline
-        uses: py-cov-action/python-coverage-comment-action@v3
+        uses: py-cov-action/python-coverage-comment-action@53ff7553078bad69030786e486677315346c2dd2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MINIMUM_GREEN: 90

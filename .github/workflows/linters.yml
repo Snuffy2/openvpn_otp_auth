@@ -32,7 +32,7 @@ jobs:
           pip install --group lint --group pytest -e .
 
       - name: Run mypy
-        run: mypy "." --install-types --non-interactive --config-file pyproject.toml
+        run: mypy "." --config-file pyproject.toml
 
       - name: Run prek
         uses: j178/prek-action@v2

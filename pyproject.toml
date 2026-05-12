@@ -59,7 +59,7 @@ addopts = """
   --durations=10
   -o console_output_style=progress
   --cov=openvpn_otp_auth
-  --cov-fail-under=0
+  --cov-fail-under=20
   --cov-report=term-missing
   --cov-report=html
 """
