@@ -29,7 +29,7 @@ jobs:
       - name: Install linting requirements
         run: |
           python -m pip install --upgrade pip
-          pip install --group lint -e .
+          pip install --group lint --group pytest -e .
 
       - name: Run mypy
         run: mypy "." --install-types --non-interactive --config-file pyproject.toml
