@@ -293,10 +293,7 @@ class OpenVPNOTPAuth:
                 cursor.execute(schema)
                 db.commit()
             else:
-                db = sqlite3.connect(
-                    db_file,
-                    detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
-                )
+                db = sqlite3.connect(db_file)
                 cursor = db.cursor()
         except sqlite3.Error as e:
             logger.error("Database error for %s. %s: %s", db_file, type(e).__name__, e)
@@ -448,7 +445,7 @@ class OpenVPNOTPAuth:
             sessioncursor.execute(
                 "REPLACE INTO sessions (username, vpn_client, ip_address, verified_on) "
                 "VALUES (?,?,?,?)",
-                (username, vpn_client, current_ip, created),
+                (username, vpn_client, current_ip, created.isoformat(sep=" ")),
             )
             sessiondb.commit()
         finally:
@@ -475,7 +472,14 @@ class OpenVPNOTPAuth:
                 "SELECT vpn_client, ip_address, verified_on FROM sessions WHERE username=?",
                 (username,),
             )
-            return sessioncursor.fetchone()
+            session = sessioncursor.fetchone()
+            if session is None or isinstance(session[2], datetime.datetime):
+                return session
+            return (
+                session[0],
+                session[1],
+                datetime.datetime.fromisoformat(session[2]),
+            )
         finally:
             sessiondb.close()
 

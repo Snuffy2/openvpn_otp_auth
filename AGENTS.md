@@ -40,13 +40,14 @@ The project is packaged as the single Python module `openvpn_otp_auth` using
 
 ## Development Environment
 
-Use the repository-local virtual environment:
+### Use the repository-local virtual environment
 
 ```bash
 ./.venv/bin/python
 ./.venv/bin/prek
 ./.venv/bin/mypy
 ./.venv/bin/ruff
+./.venv/bin/pytest
 ```
 
 If dependencies are missing, install them into `./.venv` from `pyproject.toml`.
@@ -54,23 +55,27 @@ Do not rely on global Python tooling for validation.
 
 ## Validation Commands
 
-Run these before claiming code or tooling changes are complete:
+### Run these before claiming code or tooling changes are complete
 
 ```bash
 ./.venv/bin/mypy .
 ./.venv/bin/prek run --all-files
+./.venv/bin/pytest
 ```
 
-For focused Ruff checks while iterating:
+### For focused Ruff checks while iterating
 
 ```bash
 ./.venv/bin/ruff check openvpn_otp_auth.py pyproject.toml
 ./.venv/bin/ruff format --check openvpn_otp_auth.py
 ```
 
-There is currently no committed `tests/` suite. If behavior changes are made,
-add focused pytest coverage under `tests/` unless the user explicitly says not
-to add tests.
+## Testing
+
+- Use `pytest`.
+- Add typed, well-documented tests in `tests/` and use fixtures in `conftest.py`.
+- Achieve high coverage (target >= 80%).
+- Parameterize tests when appropriate; avoid duplicate test functions.
 
 ## Coding Standards
 
