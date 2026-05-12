@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import importlib.util
 import logging
@@ -13,6 +14,7 @@ import sys
 from types import ModuleType
 from typing import Any
 
+import pyotp
 import pytest
 
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "openvpn_otp_auth.py"
@@ -70,6 +72,53 @@ def test_main_uses_parsed_filename_when_debug_precedes_file(
     assert exc_info.value.code == 1
 
 
+def test_initial_scrv1_auth_accepts_valid_password_and_totp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Initial OpenVPN auth should accept valid password and TOTP credentials."""
+    totp_seed = "JBSWY3DPEHPK3PXP"
+    otp = "123456"
+    encoded_password = base64.b64encode(b"correct-password").decode()
+    encoded_otp = base64.b64encode(otp.encode()).decode()
+    credentials = tmp_path / "credentials.txt"
+    credentials.write_text(f"alice\nSCRV1:{encoded_password}:{encoded_otp}\n")
+    module = load_module(monkeypatch, ["openvpn_otp_auth.py", str(credentials)])
+    auth = module.OpenVPNOTPAuth(module.args, install=True)
+    password_hash = auth.ph.hash("correct-password")
+    stored_sessions: list[tuple[str, str, str]] = []
+    monkeypatch.delenv("session_state", raising=False)
+    monkeypatch.setenv("IV_GUI_VER", "OpenVPN Connect")
+    monkeypatch.setenv("untrusted_ip", "198.51.100.10")
+    monkeypatch.setattr(
+        auth,
+        "get_user",
+        lambda _username: ("alice", password_hash, totp_seed, "otpauth://totp/alice"),
+    )
+
+    def verify_totp(totp_secret: str, entered_otp: str) -> bool:
+        """Check the expected TOTP inputs from the auth flow."""
+        return (totp_secret, entered_otp) == (totp_seed, otp)
+
+    monkeypatch.setattr(
+        auth,
+        "verify_totp",
+        verify_totp,
+    )
+    monkeypatch.setattr(
+        auth,
+        "store_session",
+        lambda username, vpn_client, current_ip, _created: stored_sessions.append(
+            (username, vpn_client, current_ip)
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        auth.main()
+
+    assert exc_info.value.code == 0
+    assert stored_sessions == [("alice", "OpenVPN Connect", "198.51.100.10")]
+
+
 def test_changetotp_rewrites_existing_totp_file_when_qr_generation_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -102,7 +151,7 @@ def test_changetotp_rewrites_existing_totp_file_when_qr_generation_fails(
         auth.changetotp()
 
     assert exc_info.value.code == 99
-    with sqlite3.connect(auth.user_db_file) as db:
+    with contextlib.closing(sqlite3.connect(auth.user_db_file)) as db:
         totp_uri = db.execute(
             "SELECT totp_uri FROM users WHERE username = ?",
             ("alice",),
@@ -134,7 +183,7 @@ def test_deluser_removes_legacy_path_traversal_username_without_unlinking_outsid
         auth.deluser()
 
     assert exc_info.value.code == 99
-    with sqlite3.connect(auth.user_db_file) as db:
+    with contextlib.closing(sqlite3.connect(auth.user_db_file)) as db:
         assert (
             db.execute(
                 "SELECT username FROM users WHERE username = ?",
@@ -171,7 +220,7 @@ def test_changetotp_updates_legacy_path_traversal_username_without_writing_outsi
 
     assert exc_info.value.code == 99
     stdout = capsys.readouterr().out
-    with sqlite3.connect(auth.user_db_file) as db:
+    with contextlib.closing(sqlite3.connect(auth.user_db_file)) as db:
         totp_secret, totp_uri = db.execute(
             "SELECT totp_secret, totp_uri FROM users WHERE username = ?",
             ("../outside",),
@@ -180,6 +229,39 @@ def test_changetotp_updates_legacy_path_traversal_username_without_writing_outsi
     assert totp_uri != "old-uri"
     assert outside_file.read_text() == "do not overwrite"
     assert totp_uri in stdout
+
+
+def test_verify_totp_accepts_current_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TOTP verification should accept the current valid one-time password."""
+    module = load_module(monkeypatch, ["openvpn_otp_auth.py", "--install"])
+    auth = module.OpenVPNOTPAuth(module.args, install=True)
+    totp_seed = pyotp.random_base32()
+
+    assert auth.verify_totp(totp_seed, pyotp.TOTP(totp_seed).now())
+
+
+def test_store_session_persists_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Session storage should write retrievable SQLite session state."""
+    module = load_module(monkeypatch, ["openvpn_otp_auth.py", "--install"])
+    auth = module.OpenVPNOTPAuth(module.args, install=True)
+    auth.session_db_file = str(tmp_path / "sessions.db")
+    created = module.datetime.datetime(2026, 5, 12, 10, 30, 0)
+
+    auth.store_session("alice", "OpenVPN Connect", "198.51.100.10", created)
+
+    with contextlib.closing(sqlite3.connect(auth.session_db_file)) as verify_db:
+        verify_cursor = verify_db.execute(
+            "SELECT vpn_client, ip_address, verified_on FROM sessions WHERE username = ?",
+            ("alice",),
+        )
+        try:
+            assert verify_cursor.fetchone() == (
+                "OpenVPN Connect",
+                "198.51.100.10",
+                "2026-05-12 10:30:00",
+            )
+        finally:
+            verify_cursor.close()
 
 
 def test_get_db_cursor_creates_schema(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
