@@ -256,7 +256,7 @@ def test_load_config_reads_quoted_values(
 ) -> None:
     """Configuration loading should strip shell-style quotes from path values."""
     config_file = script_path.with_suffix(".conf")
-    config_text = config_file.read_text()
+    config_text = config_file.read_text() if config_file.exists() else None
     config_file.write_text(
         "\n".join(
             [
@@ -274,7 +274,10 @@ def test_load_config_reads_quoted_values(
         module = load_module(["openvpn_otp_auth.py", "credentials"])
         auth = module.OpenVPNOTPAuth(module.args)
     finally:
-        config_file.write_text(config_text)
+        if config_text is None:
+            config_file.unlink(missing_ok=True)
+        else:
+            config_file.write_text(config_text)
 
     assert auth.issuer == "Quoted VPN"
     assert auth.totp_out_path == str(tmp_path)
