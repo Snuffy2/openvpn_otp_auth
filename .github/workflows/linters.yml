@@ -18,5 +18,18 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v6
 
+      - name: Setup python
+        id: setup_python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+
+      - name: Install requirements
+        run: pip install --group dev -e .
+
+      - name: Run mypy
+        run: mypy "." --install-types --non-interactive --config-file pyproject.toml
+
       - name: Run prek
         uses: j178/prek-action@v2
