@@ -45,6 +45,7 @@ file_formatter = logging.Formatter(
     "%(asctime)s %(levelname)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
 )
 log_file_path = Path(__file__).resolve().parent / "openvpn_otp_auth.log"
+file_handler: logging.FileHandler | None = None
 try:
     file_handler = logging.FileHandler(log_file_path)
     file_handler.setLevel(logging.INFO)
@@ -145,7 +146,8 @@ args = parser.parse_args()
 if args.debug:
     logger.setLevel(logging.DEBUG)
     stdout_handler.setLevel(logging.DEBUG)
-    file_handler.setLevel(logging.DEBUG)
+    if file_handler is not None:
+        file_handler.setLevel(logging.DEBUG)
     setup_logger.setLevel(logging.DEBUG)
     setup_stdout_handler.setLevel(logging.DEBUG)
 
@@ -178,6 +180,44 @@ class OpenVPNOTPAuth:
     def _strip_quotes(self, value: str) -> str:
         """Remove surrounding quotes from config values."""
         return value.strip('"').strip("'")
+
+    def _totp_file_path(self, username: str) -> Path:
+        """Build the TOTP file path for a username without allowing path traversal."""
+        if (
+            username in {"", ".", ".."}
+            or "/" in username
+            or "\\" in username
+            or Path(username).is_absolute()
+        ):
+            raise ValueError(f"Unsafe username for TOTP file path: {username}")
+        return Path(self.totp_out_path) / f"{username}.totp"
+
+    def _write_totp_file(self, username: str, totp_uri: str) -> Path:
+        """Write a user's TOTP QR output and URI to the configured output path."""
+        totp_file = self._totp_file_path(username)
+        try:
+            subprocess.run(
+                [
+                    "qrencode",
+                    totp_uri,
+                    "-t",
+                    "UTF8",
+                    "-o",
+                    f"{totp_file}",
+                ],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            setup_logger.warning(
+                "Failed to generate QR code: %s. Make sure qrencode is installed.", e
+            )
+            totp_file.write_text(totp_uri)
+        else:
+            with totp_file.open("a") as f:
+                f.write(f"\n{totp_uri}")
+        return totp_file
 
     def load_config(self) -> None:
         """Load configuration settings from the config file.
@@ -303,12 +343,15 @@ class OpenVPNOTPAuth:
             user exists, otherwise None.
 
         """
-        _, usercursor = self.get_userdb_cursor()
-        usercursor.execute(
-            "SELECT username, password_hash, totp_secret, totp_uri FROM users WHERE username=?",
-            (username,),
-        )
-        return usercursor.fetchone()
+        userdb, usercursor = self.get_userdb_cursor()
+        try:
+            usercursor.execute(
+                "SELECT username, password_hash, totp_secret, totp_uri FROM users WHERE username=?",
+                (username,),
+            )
+            return usercursor.fetchone()
+        finally:
+            userdb.close()
 
     def check_user(self, username: str) -> bool:
         """Check if a user exists in the database.
@@ -324,12 +367,15 @@ class OpenVPNOTPAuth:
             True if the user exists, False otherwise.
 
         """
-        _, usercursor = self.get_userdb_cursor()
-        usercursor.execute(
-            "SELECT username FROM users WHERE username=?",
-            (username,),
-        )
-        return usercursor.fetchone() is not None
+        userdb, usercursor = self.get_userdb_cursor()
+        try:
+            usercursor.execute(
+                "SELECT username FROM users WHERE username=?",
+                (username,),
+            )
+            return usercursor.fetchone() is not None
+        finally:
+            userdb.close()
 
     def update_hash_for_user(self, username: str, new_hash: str) -> None:
         """Update the password hash for a user in the database.
@@ -344,11 +390,14 @@ class OpenVPNOTPAuth:
         """
         logger.info("Rehashing password for user: %s", username)
         userdb, usercursor = self.get_userdb_cursor()
-        usercursor.execute(
-            "UPDATE users SET password_hash = ? WHERE username = ?",
-            (new_hash, username),
-        )
-        userdb.commit()
+        try:
+            usercursor.execute(
+                "UPDATE users SET password_hash = ? WHERE username = ?",
+                (new_hash, username),
+            )
+            userdb.commit()
+        finally:
+            userdb.close()
 
     def verify_totp(self, secret: str, otp: str) -> bool:
         """Verify a TOTP code against the user's secret.
@@ -395,12 +444,15 @@ class OpenVPNOTPAuth:
 
         """
         sessiondb, sessioncursor = self.get_sessiondb_cursor()
-        sessioncursor.execute(
-            "REPLACE INTO sessions (username, vpn_client, ip_address, verified_on) "
-            "VALUES (?,?,?,?)",
-            (username, vpn_client, current_ip, created),
-        )
-        sessiondb.commit()
+        try:
+            sessioncursor.execute(
+                "REPLACE INTO sessions (username, vpn_client, ip_address, verified_on) "
+                "VALUES (?,?,?,?)",
+                (username, vpn_client, current_ip, created),
+            )
+            sessiondb.commit()
+        finally:
+            sessiondb.close()
 
     def get_session(self, username: str) -> tuple | None:
         """Retrieve session information for a given username from the session database.
@@ -417,12 +469,15 @@ class OpenVPNOTPAuth:
             exists, otherwise None.
 
         """
-        _, sessioncursor = self.get_sessiondb_cursor()
-        sessioncursor.execute(
-            "SELECT vpn_client, ip_address, verified_on FROM sessions WHERE username=?",
-            (username,),
-        )
-        return sessioncursor.fetchone()
+        sessiondb, sessioncursor = self.get_sessiondb_cursor()
+        try:
+            sessioncursor.execute(
+                "SELECT vpn_client, ip_address, verified_on FROM sessions WHERE username=?",
+                (username,),
+            )
+            return sessioncursor.fetchone()
+        finally:
+            sessiondb.close()
 
     def main(self) -> None:
         """Execute main authentication logic for OpenVPN OTP Auth.
@@ -444,7 +499,7 @@ class OpenVPNOTPAuth:
             pwd.getpwuid(os.geteuid()).pw_name,
             os.geteuid(),
         )
-        with Path(sys.argv[1]).open() as tmpfile:
+        with Path(self.args.filename).open() as tmpfile:
             username = tmpfile.readline().rstrip("\n")
             password = tmpfile.readline().rstrip("\n")
 
@@ -625,6 +680,11 @@ class OpenVPNOTPAuth:
 
         """
         new_user = self.args.adduser[0]
+        try:
+            totp_file = self._totp_file_path(new_user)
+        except ValueError as e:
+            setup_logger.error("%s", e)
+            sys.exit(99)
         if self.check_user(new_user):
             setup_logger.error("User Already Exists: %s", new_user)
             sys.exit(99)
@@ -638,35 +698,19 @@ class OpenVPNOTPAuth:
             name=new_user, issuer_name=self.issuer
         )
         userdb, usercursor = self.get_userdb_cursor()
-        usercursor.execute(
-            "INSERT INTO users (username, password_hash, totp_secret, totp_uri) VALUES (?,?,?,?)",
-            (new_user, self.ph.hash(new_pass), totp_secret, totp_uri),
-        )
-        userdb.commit()
+        try:
+            usercursor.execute(
+                "INSERT INTO users (username, password_hash, totp_secret, totp_uri) "
+                "VALUES (?,?,?,?)",
+                (new_user, self.ph.hash(new_pass), totp_secret, totp_uri),
+            )
+            userdb.commit()
+        finally:
+            userdb.close()
         if self.check_user(new_user):
             setup_logger.info("User Added: %s", new_user)
-            try:
-                subprocess.run(
-                    [
-                        "qrencode",
-                        totp_uri,
-                        "-t",
-                        "UTF8",
-                        "-o",
-                        f"{self.totp_out_path}/{new_user}.totp",
-                    ],
-                    check=True,
-                    text=True,
-                    capture_output=True,
-                )
-            except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                setup_logger.warning(
-                    "Failed to generate QR code: %s. Make sure qrencode is installed.", e
-                )
-                # Continue without QR code generation
-            with Path(f"{self.totp_out_path}/{new_user}.totp").open("a") as f:
-                f.write(f"{totp_uri}")
-            with Path(f"{self.totp_out_path}/{new_user}.totp").open() as f:
+            self._write_totp_file(new_user, totp_uri)
+            with totp_file.open() as f:
                 setup_logger.info(f.read())
         else:
             setup_logger.error("Add Failed: %s", new_user)
@@ -688,15 +732,22 @@ class OpenVPNOTPAuth:
         if not self.check_user(del_user):
             setup_logger.error("User Doesn't Exist: %s", del_user)
             sys.exit(99)
-        f = Path(f"{self.totp_out_path}/{del_user}.totp")
-        with contextlib.suppress(FileNotFoundError):
-            f.unlink()
+        try:
+            f = self._totp_file_path(del_user)
+        except ValueError as e:
+            setup_logger.warning("%s. Skipping TOTP file deletion.", e)
+        else:
+            with contextlib.suppress(FileNotFoundError):
+                f.unlink()
         userdb, usercursor = self.get_userdb_cursor()
-        usercursor.execute(
-            "DELETE FROM users WHERE username=?",
-            (del_user,),
-        )
-        userdb.commit()
+        try:
+            usercursor.execute(
+                "DELETE FROM users WHERE username=?",
+                (del_user,),
+            )
+            userdb.commit()
+        finally:
+            userdb.close()
         if self.check_user(del_user):
             setup_logger.error("Delete Failed: %s", del_user)
         else:
@@ -725,11 +776,14 @@ class OpenVPNOTPAuth:
             setup_logger.error("Passwords don't match. Password not changed for: %s", user)
             sys.exit(99)
         userdb, usercursor = self.get_userdb_cursor()
-        usercursor.execute(
-            "UPDATE users SET password_hash = ? WHERE username = ?",
-            (self.ph.hash(new_pass), user),
-        )
-        userdb.commit()
+        try:
+            usercursor.execute(
+                "UPDATE users SET password_hash = ? WHERE username = ?",
+                (self.ph.hash(new_pass), user),
+            )
+            userdb.commit()
+        finally:
+            userdb.close()
         setup_logger.info("Password Updated: %s", user)
         sys.exit(99)
 
@@ -749,31 +803,29 @@ class OpenVPNOTPAuth:
         if not self.check_user(user):
             setup_logger.error("User Doesn't Exist: %s", user)
             sys.exit(99)
+        try:
+            totp_file = self._totp_file_path(user)
+        except ValueError as e:
+            setup_logger.warning("%s. Skipping TOTP file update.", e)
+            totp_file = None
         totp_secret = pyotp.random_base32()
         totp_uri = pyotp.totp.TOTP(totp_secret).provisioning_uri(name=user, issuer_name=self.issuer)
         userdb, usercursor = self.get_userdb_cursor()
-        usercursor.execute(
-            "UPDATE users SET totp_secret = ?, totp_uri = ? WHERE username = ?",
-            (totp_secret, totp_uri, user),
-        )
-        userdb.commit()
-        setup_logger.info("TOTP Updated: %s", user)
         try:
-            subprocess.run(
-                ["qrencode", totp_uri, "-t", "UTF8", "-o", f"{self.totp_out_path}/{user}.totp"],
-                check=True,
-                text=True,
-                capture_output=True,
+            usercursor.execute(
+                "UPDATE users SET totp_secret = ?, totp_uri = ? WHERE username = ?",
+                (totp_secret, totp_uri, user),
             )
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            setup_logger.warning(
-                "Failed to generate QR code: %s. Make sure qrencode is installed.", e
-            )
-            # Continue without QR code generation
-        with Path(f"{self.totp_out_path}/{user}.totp").open("a") as f:
-            f.write(f"{totp_uri}")
-        with Path(f"{self.totp_out_path}/{user}.totp").open() as f:
-            setup_logger.info(f.read())
+            userdb.commit()
+        finally:
+            userdb.close()
+        setup_logger.info("TOTP Updated: %s", user)
+        if totp_file is None:
+            setup_logger.info(totp_uri)
+        else:
+            self._write_totp_file(user, totp_uri)
+            with totp_file.open() as f:
+                setup_logger.info(f.read())
         sys.exit(99)
 
     def showtotp(self) -> None:
@@ -792,8 +844,10 @@ class OpenVPNOTPAuth:
             setup_logger.error("User Doesn't Exist: %s", user)
             sys.exit(99)
         try:
-            with Path(f"{self.totp_out_path}/{user}.totp").open() as f:
+            with self._totp_file_path(user).open() as f:
                 setup_logger.info(f.read())
+        except ValueError as e:
+            setup_logger.error("%s", e)
         except FileNotFoundError:
             setup_logger.error("TOTP file not found for user: %s", user)
         sys.exit(99)
@@ -814,11 +868,14 @@ class OpenVPNOTPAuth:
             Exits with code 99 after listing users.
 
         """
-        _, usercursor = self.get_userdb_cursor()
-        usercursor.execute(
-            "SELECT username FROM users ORDER BY username ASC",
-        )
-        users = usercursor.fetchall()
+        userdb, usercursor = self.get_userdb_cursor()
+        try:
+            usercursor.execute(
+                "SELECT username FROM users ORDER BY username ASC",
+            )
+            users = usercursor.fetchall()
+        finally:
+            userdb.close()
         setup_logger.info("Users: %d\n_______________________", len(users))
         for user in users:
             setup_logger.info("%s", user[0])
