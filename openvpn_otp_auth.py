@@ -390,12 +390,14 @@ class OpenVPNOTPAuth:
         """
         logger.info("Rehashing password for user: %s", username)
         userdb, usercursor = self.get_userdb_cursor()
-        usercursor.execute(
-            "UPDATE users SET password_hash = ? WHERE username = ?",
-            (new_hash, username),
-        )
-        userdb.commit()
-        userdb.close()
+        try:
+            usercursor.execute(
+                "UPDATE users SET password_hash = ? WHERE username = ?",
+                (new_hash, username),
+            )
+            userdb.commit()
+        finally:
+            userdb.close()
 
     def verify_totp(self, secret: str, otp: str) -> bool:
         """Verify a TOTP code against the user's secret.
@@ -442,13 +444,15 @@ class OpenVPNOTPAuth:
 
         """
         sessiondb, sessioncursor = self.get_sessiondb_cursor()
-        sessioncursor.execute(
-            "REPLACE INTO sessions (username, vpn_client, ip_address, verified_on) "
-            "VALUES (?,?,?,?)",
-            (username, vpn_client, current_ip, created),
-        )
-        sessiondb.commit()
-        sessiondb.close()
+        try:
+            sessioncursor.execute(
+                "REPLACE INTO sessions (username, vpn_client, ip_address, verified_on) "
+                "VALUES (?,?,?,?)",
+                (username, vpn_client, current_ip, created),
+            )
+            sessiondb.commit()
+        finally:
+            sessiondb.close()
 
     def get_session(self, username: str) -> tuple | None:
         """Retrieve session information for a given username from the session database.
@@ -694,12 +698,15 @@ class OpenVPNOTPAuth:
             name=new_user, issuer_name=self.issuer
         )
         userdb, usercursor = self.get_userdb_cursor()
-        usercursor.execute(
-            "INSERT INTO users (username, password_hash, totp_secret, totp_uri) VALUES (?,?,?,?)",
-            (new_user, self.ph.hash(new_pass), totp_secret, totp_uri),
-        )
-        userdb.commit()
-        userdb.close()
+        try:
+            usercursor.execute(
+                "INSERT INTO users (username, password_hash, totp_secret, totp_uri) "
+                "VALUES (?,?,?,?)",
+                (new_user, self.ph.hash(new_pass), totp_secret, totp_uri),
+            )
+            userdb.commit()
+        finally:
+            userdb.close()
         if self.check_user(new_user):
             setup_logger.info("User Added: %s", new_user)
             self._write_totp_file(new_user, totp_uri)
@@ -733,12 +740,14 @@ class OpenVPNOTPAuth:
             with contextlib.suppress(FileNotFoundError):
                 f.unlink()
         userdb, usercursor = self.get_userdb_cursor()
-        usercursor.execute(
-            "DELETE FROM users WHERE username=?",
-            (del_user,),
-        )
-        userdb.commit()
-        userdb.close()
+        try:
+            usercursor.execute(
+                "DELETE FROM users WHERE username=?",
+                (del_user,),
+            )
+            userdb.commit()
+        finally:
+            userdb.close()
         if self.check_user(del_user):
             setup_logger.error("Delete Failed: %s", del_user)
         else:
@@ -767,12 +776,14 @@ class OpenVPNOTPAuth:
             setup_logger.error("Passwords don't match. Password not changed for: %s", user)
             sys.exit(99)
         userdb, usercursor = self.get_userdb_cursor()
-        usercursor.execute(
-            "UPDATE users SET password_hash = ? WHERE username = ?",
-            (self.ph.hash(new_pass), user),
-        )
-        userdb.commit()
-        userdb.close()
+        try:
+            usercursor.execute(
+                "UPDATE users SET password_hash = ? WHERE username = ?",
+                (self.ph.hash(new_pass), user),
+            )
+            userdb.commit()
+        finally:
+            userdb.close()
         setup_logger.info("Password Updated: %s", user)
         sys.exit(99)
 
@@ -800,12 +811,14 @@ class OpenVPNOTPAuth:
         totp_secret = pyotp.random_base32()
         totp_uri = pyotp.totp.TOTP(totp_secret).provisioning_uri(name=user, issuer_name=self.issuer)
         userdb, usercursor = self.get_userdb_cursor()
-        usercursor.execute(
-            "UPDATE users SET totp_secret = ?, totp_uri = ? WHERE username = ?",
-            (totp_secret, totp_uri, user),
-        )
-        userdb.commit()
-        userdb.close()
+        try:
+            usercursor.execute(
+                "UPDATE users SET totp_secret = ?, totp_uri = ? WHERE username = ?",
+                (totp_secret, totp_uri, user),
+            )
+            userdb.commit()
+        finally:
+            userdb.close()
         setup_logger.info("TOTP Updated: %s", user)
         if totp_file is None:
             setup_logger.info(totp_uri)
