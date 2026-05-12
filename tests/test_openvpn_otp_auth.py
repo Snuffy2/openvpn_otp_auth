@@ -117,6 +117,8 @@ def test_initial_scrv1_auth_accepts_valid_password_and_totp(
 
     assert exc_info.value.code == 0
     assert stored_sessions == [("alice", "OpenVPN Connect", "198.51.100.10")]
+
+
 def test_changetotp_rewrites_existing_totp_file_when_qr_generation_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -227,39 +229,6 @@ def test_changetotp_updates_legacy_path_traversal_username_without_writing_outsi
     assert totp_uri != "old-uri"
     assert outside_file.read_text() == "do not overwrite"
     assert totp_uri in stdout
-
-
-def test_verify_totp_accepts_current_code(monkeypatch: pytest.MonkeyPatch) -> None:
-    """TOTP verification should accept the current valid one-time password."""
-    module = load_module(monkeypatch, ["openvpn_otp_auth.py", "--install"])
-    auth = module.OpenVPNOTPAuth(module.args, install=True)
-    totp_seed = pyotp.random_base32()
-
-    assert auth.verify_totp(totp_seed, pyotp.TOTP(totp_seed).now())
-
-
-def test_store_session_persists_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Session storage should write retrievable SQLite session state."""
-    module = load_module(monkeypatch, ["openvpn_otp_auth.py", "--install"])
-    auth = module.OpenVPNOTPAuth(module.args, install=True)
-    auth.session_db_file = str(tmp_path / "sessions.db")
-    created = module.datetime.datetime(2026, 5, 12, 10, 30, 0)
-
-    auth.store_session("alice", "OpenVPN Connect", "198.51.100.10", created)
-
-    with contextlib.closing(sqlite3.connect(auth.session_db_file)) as verify_db:
-        verify_cursor = verify_db.execute(
-            "SELECT vpn_client, ip_address, verified_on FROM sessions WHERE username = ?",
-            ("alice",),
-        )
-        try:
-            assert verify_cursor.fetchone() == (
-                "OpenVPN Connect",
-                "198.51.100.10",
-                "2026-05-12 10:30:00",
-            )
-        finally:
-            verify_cursor.close()
 
 
 def test_verify_totp_accepts_current_code(monkeypatch: pytest.MonkeyPatch) -> None:
