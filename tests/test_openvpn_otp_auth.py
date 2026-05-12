@@ -19,7 +19,7 @@ SCRIPT_PATH = Path(__file__).resolve().parents[1] / "openvpn_otp_auth.py"
 
 def load_module(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> ModuleType:
     """Load the script module with a controlled command-line argument list."""
-    module_name = "openvpn_otp_auth_under_test"
+    module_name = "openvpn_otp_auth"
     monkeypatch.setattr(sys, "argv", argv)
     sys.modules.pop(module_name, None)
     spec = importlib.util.spec_from_file_location(module_name, SCRIPT_PATH)
@@ -29,6 +29,14 @@ def load_module(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_module_loads_with_controlled_cli_args(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The script should be importable when provided valid CLI arguments."""
+    module = load_module(monkeypatch, ["openvpn_otp_auth.py", "--install"])
+
+    assert module.VERSION
+    assert module.args.install is True
 
 
 def test_debug_import_handles_unavailable_log_file(monkeypatch: pytest.MonkeyPatch) -> None:
