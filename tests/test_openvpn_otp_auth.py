@@ -117,8 +117,6 @@ def test_initial_scrv1_auth_accepts_valid_password_and_totp(
 
     assert exc_info.value.code == 0
     assert stored_sessions == [("alice", "OpenVPN Connect", "198.51.100.10")]
-
-
 def test_changetotp_rewrites_existing_totp_file_when_qr_generation_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
