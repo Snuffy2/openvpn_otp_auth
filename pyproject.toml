@@ -59,7 +59,7 @@ addopts = """
   --durations=10
   -o console_output_style=progress
   --cov=openvpn_otp_auth
-  --cov-fail-under=30
+  --cov-fail-under=70
   --cov-report=term-missing
   --cov-report=html
 """
@@ -161,6 +161,17 @@ ignore = [
 ]
 fixable = ["ALL"]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "B017",    # Don't assert blind Exception
+    "C90",     # mccabe, complexity
+    "E501",    # line too long
+    "S101",    # Use of assert detected
+    "S105",    # Possible hardcoded password
+    "S108",    # hardcoded-temp-file
+    "SLF001",  # Private member accessed
+]
+
 [tool.ruff.lint.flake8-pytest-style]
 fixture-parentheses = false
 
@@ -168,9 +179,6 @@ fixture-parentheses = false
 force-sort-within-sections = true
 combine-as-imports = true
 split-on-trailing-comma = false
-
-[tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 25
