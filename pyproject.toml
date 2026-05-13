@@ -8,8 +8,21 @@ description = "OpenVPN username, password, and TOTP authentication helper."
 readme = "README.md"
 requires-python = ">=3.14"
 license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
     { name = "Snuffy2" },
+]
+keywords = ["openvpn", "otp", "totp", "mfa", "authentication"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Security",
+    "Topic :: System :: Networking",
+    "Topic :: Utilities",
 ]
 dependencies = [
     "argon2-cffi",
@@ -17,6 +30,14 @@ dependencies = [
     "pyotp",
 ]
 dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/Snuffy2/openvpn_otp_auth"
+Issues = "https://github.com/Snuffy2/openvpn_otp_auth/issues"
+Source = "https://github.com/Snuffy2/openvpn_otp_auth"
+
+[project.scripts]
+openvpn-otp-auth = "openvpn_otp_auth:cli"
 
 [tool.setuptools]
 py-modules = ["openvpn_otp_auth"]
@@ -47,6 +68,8 @@ pytest = [
 dev = [
     { include-group = "lint" },
     { include-group = "pytest" },
+    "build",
+    "twine",
 ]
 
 [tool.codespell]

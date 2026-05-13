@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import importlib.metadata
 import logging
 from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+import tomllib
 from typing import Any
 import warnings
 
@@ -17,12 +19,75 @@ import pyotp
 import pytest
 
 
-def test_module_loads_with_controlled_cli_args(load_module: Any) -> None:
-    """The script should be importable when provided valid CLI arguments."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+def test_module_import_does_not_parse_command_line(load_module: Any) -> None:
+    """Importing the module should not parse CLI arguments or exit."""
+    module = load_module([])
 
     assert module.VERSION
+    assert not hasattr(module, "args")
+
+
+def test_parse_args_handles_controlled_cli_args(load_module: Any) -> None:
+    """The script should expose explicit parsing for controlled CLI arguments."""
+    module = load_module(["openvpn_otp_auth.py", "--install"])
+
     assert module.args.install is True
+
+
+def test_cli_dispatches_install_action(monkeypatch: pytest.MonkeyPatch, load_module: Any) -> None:
+    """The package console entry point should dispatch through cli()."""
+    module = load_module([])
+    calls: list[argparse.Namespace] = []
+
+    class StubAuth:
+        """Capture the parsed arguments passed through CLI dispatch."""
+
+        def __init__(self, args: argparse.Namespace, install: bool = False) -> None:
+            """Record constructor inputs."""
+            calls.append(args)
+            assert install is True
+
+        def install(self) -> None:
+            """Simulate the install command exit behavior."""
+            raise SystemExit(99)
+
+    monkeypatch.setattr(module, "OpenVPNOTPAuth", StubAuth)
+
+    assert module.cli(["--install"]) == 99
+    assert calls[0].install is True
+
+
+def test_pyproject_declares_pypi_console_entrypoint_and_metadata() -> None:
+    """Project metadata should be complete enough for a PyPI console package."""
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text())
+    project = pyproject["project"]
+
+    assert project["scripts"]["openvpn-otp-auth"] == "openvpn_otp_auth:cli"
+    assert project["urls"]["Homepage"] == "https://github.com/Snuffy2/openvpn_otp_auth"
+    assert project["urls"]["Issues"] == "https://github.com/Snuffy2/openvpn_otp_auth/issues"
+    assert "Environment :: Console" in project["classifiers"]
+    assert "Topic :: System :: Networking" in project["classifiers"]
+    assert "build" in pyproject["dependency-groups"]["dev"]
+    assert "twine" in pyproject["dependency-groups"]["dev"]
+
+
+def test_installed_metadata_exposes_console_entrypoint() -> None:
+    """Editable installs should expose the PyPI console script entry point."""
+    entry_points = importlib.metadata.entry_points(group="console_scripts")
+
+    assert any(
+        entry_point.name == "openvpn-otp-auth" and entry_point.value == "openvpn_otp_auth:cli"
+        for entry_point in entry_points
+    )
+
+
+def test_readme_documents_pypi_install_and_console_command() -> None:
+    """README installation guidance should match the packaged CLI."""
+    readme = Path("README.md").read_text()
+
+    assert "pip install openvpn-otp-auth" in readme
+    assert "openvpn-otp-auth --install" in readme
+    assert "auth-user-pass-verify /etc/config/openvpn_otp_auth/openvpn-otp-auth via-file" in readme
 
 
 def test_debug_import_handles_unavailable_log_file(

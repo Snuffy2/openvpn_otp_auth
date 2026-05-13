@@ -66,84 +66,96 @@ setup_logger.handlers = []  # Remove any inherited handlers
 setup_logger.addHandler(setup_stdout_handler)
 setup_logger.propagate = False
 
-parser = argparse.ArgumentParser(
-    description=f"""OpenVPN python authentication script with password and
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser for OpenVPN OTP Auth."""
+    parser = argparse.ArgumentParser(
+        prog="openvpn-otp-auth",
+        description=f"""OpenVPN python authentication script with password and
 multi-factor authentication (MFA) [TOTP] for use with auth-user-pass-verify
 via-file option.\n
 Current path: {Path(__file__).resolve().parent}
 Installation:
-1. Place the {Path(__file__).name} script in a location that ideally won't be
-   removed by system updates (ex. /etc/config/openvpn_otp_auth).
-2. Run: 'python {Path(__file__).name} --install' to build the config file
+1. Install this package with pip, or place the {Path(__file__).name} script in
+   a location that ideally won't be removed by system updates.
+2. Run: 'openvpn-otp-auth --install' or 'python {Path(__file__).name} --install'
+   to build the config file
    {Path(__file__).stem}.conf in the same folder as the python script.
 3. Review the Config file and make any necessary changes making sure the
    locations are correct and the issuer name is set.\n
 Example server.ovpn lines:
-\tauth-user-pass-verify /etc/config/openvpn_otp_auth/{Path(__file__).name} via-file
+\tauth-user-pass-verify /etc/config/openvpn_otp_auth/openvpn-otp-auth via-file
 \tauth-gen-token 0 external-auth\n\n""",
-    epilog=(
-        "Put the username in quotes if getting errors with not enough or too many "
-        "arguments. When new users are created or TOTP is changed, the TOTP QR Code "
-        "and URL will display and also be saved to a file called <name>.totp"
-    ),
-    formatter_class=argparse.RawDescriptionHelpFormatter,
-)
+        epilog=(
+            "Put the username in quotes if getting errors with not enough or too many "
+            "arguments. When new users are created or TOTP is changed, the TOTP QR Code "
+            "and URL will display and also be saved to a file called <name>.totp"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
 
-ovpnauth = parser.add_mutually_exclusive_group(required=True)
-ovpnauth.add_argument(
-    "filename", help="Called by OpenVPN with the file of login credentials", nargs="?"
-)
-ovpnauth.add_argument(
-    "--install",
-    help="Generate the config file with default values",
-    action="store_true",
-)
-ovpnauth.add_argument(
-    "--adduser",
-    help="Add a new user",
-    type=str,
-    nargs=1,
-    metavar=("<username>"),
-)
-ovpnauth.add_argument(
-    "--deluser",
-    help="Delete an existing user",
-    type=str,
-    nargs=1,
-    metavar=("<username>"),
-)
-ovpnauth.add_argument(
-    "--changepass",
-    help="Change the password for an existing user",
-    type=str,
-    nargs=1,
-    metavar=("<username>"),
-)
-ovpnauth.add_argument(
-    "--changetotp",
-    help="Generate a new TOTP for an existing user",
-    type=str,
-    nargs=1,
-    metavar=("<username>"),
-)
-ovpnauth.add_argument(
-    "--showtotp",
-    help="Show the TOTP for an existing user",
-    type=str,
-    nargs=1,
-    metavar=("<username>"),
-)
-ovpnauth.add_argument("--listusers", help="List all users", action="store_true")
-parser.add_argument(
-    "--debug",
-    help="Enable debug logging",
-    action="store_true",
-)
+    ovpnauth = parser.add_mutually_exclusive_group(required=True)
+    ovpnauth.add_argument(
+        "filename", help="Called by OpenVPN with the file of login credentials", nargs="?"
+    )
+    ovpnauth.add_argument(
+        "--install",
+        help="Generate the config file with default values",
+        action="store_true",
+    )
+    ovpnauth.add_argument(
+        "--adduser",
+        help="Add a new user",
+        type=str,
+        nargs=1,
+        metavar=("<username>"),
+    )
+    ovpnauth.add_argument(
+        "--deluser",
+        help="Delete an existing user",
+        type=str,
+        nargs=1,
+        metavar=("<username>"),
+    )
+    ovpnauth.add_argument(
+        "--changepass",
+        help="Change the password for an existing user",
+        type=str,
+        nargs=1,
+        metavar=("<username>"),
+    )
+    ovpnauth.add_argument(
+        "--changetotp",
+        help="Generate a new TOTP for an existing user",
+        type=str,
+        nargs=1,
+        metavar=("<username>"),
+    )
+    ovpnauth.add_argument(
+        "--showtotp",
+        help="Show the TOTP for an existing user",
+        type=str,
+        nargs=1,
+        metavar=("<username>"),
+    )
+    ovpnauth.add_argument("--listusers", help="List all users", action="store_true")
+    parser.add_argument(
+        "--debug",
+        help="Enable debug logging",
+        action="store_true",
+    )
+    return parser
 
-args = parser.parse_args()
 
-# Set log level to DEBUG if --debug is passed
-if args.debug:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments without doing so at module import time."""
+    return build_parser().parse_args(argv)
+
+
+def configure_debug_logging(args: argparse.Namespace) -> None:
+    """Enable debug logging when requested by command-line arguments."""
+    if not args.debug:
+        return
     logger.setLevel(logging.DEBUG)
     stdout_handler.setLevel(logging.DEBUG)
     if file_handler is not None:
@@ -151,7 +163,6 @@ if args.debug:
     setup_logger.setLevel(logging.DEBUG)
     setup_stdout_handler.setLevel(logging.DEBUG)
 
-# print(f"Debug: args: {args}")
 
 SESSION_DB_SCHEMA = (
     "CREATE TABLE sessions (username VARCHAR PRIMARY KEY, vpn_client VARCHAR, "
@@ -886,7 +897,8 @@ class OpenVPNOTPAuth:
         sys.exit(99)
 
 
-if __name__ == "__main__":
+def run_command(args: argparse.Namespace) -> int:
+    """Run the parsed command-line action."""
     if not args.filename:
         setup_logger.info("Running %s %s", Path(__file__).name, VERSION)
         setup_logger.debug("Arguments: %s", args)
@@ -910,4 +922,21 @@ if __name__ == "__main__":
             auth.showtotp()
         elif args.listusers:
             auth.listusers()
-        sys.exit(99)
+        return 99
+    return 99
+
+
+def cli(argv: list[str] | None = None) -> int:
+    """Console script entry point for OpenVPN OTP Auth."""
+    parsed_args = parse_args(argv)
+    configure_debug_logging(parsed_args)
+    try:
+        return run_command(parsed_args)
+    except SystemExit as e:
+        if isinstance(e.code, int):
+            return e.code
+        raise
+
+
+if __name__ == "__main__":
+    sys.exit(cli())

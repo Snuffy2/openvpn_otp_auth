@@ -26,7 +26,7 @@ def load_module(
     """Return a loader for the script module with controlled command-line arguments."""
 
     def _load_module(argv: list[str]) -> ModuleType:
-        """Load the script module with a controlled command-line argument list."""
+        """Load the script module and optionally parse controlled command-line arguments."""
         module_name = "openvpn_otp_auth"
         monkeypatch.setattr(sys, "argv", argv)
         sys.modules.pop(module_name, None)
@@ -36,6 +36,8 @@ def load_module(
             raise RuntimeError(msg)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
+        if argv:
+            module.__dict__["args"] = module.parse_args(argv[1:])
         return module
 
     return _load_module
