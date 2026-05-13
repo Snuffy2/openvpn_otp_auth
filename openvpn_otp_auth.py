@@ -26,7 +26,7 @@ import argon2
 from getpass_asterisk.getpass_asterisk import getpass_asterisk  # type: ignore[import-untyped]
 import pyotp
 
-VERSION = "v1.3.0"
+VERSION = "v1.4.0"
 
 # Main logger setup (stdout + file)
 logger = logging.getLogger(__name__)
