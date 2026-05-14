@@ -1,16 +1,38 @@
-# OpenVPN TOTP Auth Python Script
+# OpenVPN OTP Auth
 
-* Validates OpenVPN username/password/TOTP from file passed as the first arg when called from OpenVPN server using auth-user-pass-verify. 
+* Validates OpenVPN username/password/TOTP from file passed as the first arg when called from OpenVPN server using auth-user-pass-verify.
 * TOTP (aka. 2FA, MFA) uses Google Authenticator (or Authenticator-supporting third-party applications).
 * User management is done from the CLI and stores users credentials and sessions in SQLite DBs.
 
 ## Installation
 
-1. Place the openvpn_otp_auth.py script in a location that ideally won't be removed by system updates (ex. /etc/config/openvpn_otp_auth).
-2. Run: `python openvpn_otp_auth.py --install` to build the config file `openvpn_otp_auth.conf` in the same folder as the python script.
-3. Review the Config file and make any necessary changes making sure the locations are correct and the issuer name is set.
+Install the PyPI package as an isolated command-line tool with [uv](https://docs.astral.sh/uv/):
 
-<details><summary><h3>Default openvpn_otp_auth.conf (Created by running: python openvpn_otp_auth.py --install)</h3></summary>
+```bash
+uv tool install openvpn-otp-auth
+```
+
+Generate the OpenWrt config file at `/etc/config/openvpn_otp_auth`:
+
+```bash
+openvpn-otp-auth --install
+```
+
+If the current user cannot write to `/etc/config`, run the command with the needed privileges. If `sudo` cannot find the uv-installed command, use the full path shown by `uv tool dir --bin`.
+
+The helper reads `/etc/config/openvpn_otp_auth/openvpn_otp_auth.conf` at runtime. Review the generated config and make any necessary changes so the storage locations are correct and the issuer name is set. The default config below shows what `--install` creates.
+
+For local development, sync the checkout with uv and run the package module or console script from that environment:
+
+```bash
+uv sync --all-groups
+uv run python -m openvpn_otp_auth --help
+uv run openvpn-otp-auth --help
+```
+
+The generated config defaults the SQLite databases and TOTP output files under `/etc/config/openvpn_otp_auth` too.
+
+<details><summary><h3>Default openvpn_otp_auth.conf (Created by running: openvpn-otp-auth --install)</h3></summary>
 
 ```
 [OpenVPN OTP Auth]
@@ -27,6 +49,8 @@ session_db_file = /etc/config/openvpn_otp_auth/sessions.db
 </details>
 
 <details><summary><h3>Example server.ovpn (incomplete)</h3></summary>
+
+#### Use the installed uv tool executable path in the OpenVPN server configuration. Run `uv tool dir --bin` and replace `<uv-tool-bin>` in the example below with that directory.
 
 ```
 mode server
@@ -45,7 +69,7 @@ persist-tun
 user openvpn
 group openvpn
 script-security 2
-auth-user-pass-verify /etc/config/openvpn_otp_auth/openvpn_otp_auth.py via-file
+auth-user-pass-verify <uv-tool-bin>/openvpn-otp-auth via-file
 auth-gen-token 0 external-auth
 reneg-sec 3600
 keepalive 10 60
@@ -101,7 +125,7 @@ Option | Description |
 
 ### Notes
 
-* Put the username in quotes if getting errors with not enough or too many arguments. 
+* Put the username in quotes if getting errors with not enough or too many arguments.
 * When new users are created or TOTP is changed, the TOTP QR Code and URL will display and also be saved to a file called \<username\>.totp
 
 ## Authors

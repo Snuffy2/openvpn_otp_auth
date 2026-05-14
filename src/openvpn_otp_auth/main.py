@@ -26,7 +26,21 @@ import argon2
 from getpass_asterisk.getpass_asterisk import getpass_asterisk  # type: ignore[import-untyped]
 import pyotp
 
-VERSION = "v1.4.0"
+from ._version import VERSION
+
+CONFIG_DIR = Path("/etc/config/openvpn_otp_auth")
+CONFIG_FILENAME = "openvpn_otp_auth.conf"
+
+
+def get_config_dir() -> Path:
+    """Return the directory that contains runtime config and default storage files."""
+    return CONFIG_DIR
+
+
+def get_config_file_path() -> Path:
+    """Return the runtime config file path."""
+    return get_config_dir() / CONFIG_FILENAME
+
 
 # Main logger setup (stdout + file)
 logger = logging.getLogger(__name__)
@@ -44,13 +58,15 @@ logger.addHandler(stdout_handler)
 file_formatter = logging.Formatter(
     "%(asctime)s %(levelname)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
 )
-log_file_path = Path(__file__).resolve().parent / "openvpn_otp_auth.log"
+log_file_path = get_config_dir() / "openvpn_otp_auth.log"
 file_handler: logging.FileHandler | None = None
 try:
     file_handler = logging.FileHandler(log_file_path)
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
+except FileNotFoundError:
+    pass
 except PermissionError as e:
     logger.warning("Could not write to logfile: %s", e)
 
@@ -66,84 +82,95 @@ setup_logger.handlers = []  # Remove any inherited handlers
 setup_logger.addHandler(setup_stdout_handler)
 setup_logger.propagate = False
 
-parser = argparse.ArgumentParser(
-    description=f"""OpenVPN python authentication script with password and
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser for OpenVPN OTP Auth."""
+    parser = argparse.ArgumentParser(
+        prog="openvpn-otp-auth",
+        description=f"""OpenVPN python authentication script with password and
 multi-factor authentication (MFA) [TOTP] for use with auth-user-pass-verify
 via-file option.\n
-Current path: {Path(__file__).resolve().parent}
+Current config path: {get_config_file_path()}
 Installation:
-1. Place the {Path(__file__).name} script in a location that ideally won't be
-   removed by system updates (ex. /etc/config/openvpn_otp_auth).
-2. Run: 'python {Path(__file__).name} --install' to build the config file
-   {Path(__file__).stem}.conf in the same folder as the python script.
+1. Install this package with 'uv tool install openvpn-otp-auth'.
+2. Run: 'openvpn-otp-auth --install' or 'python -m openvpn_otp_auth --install'
+   to build the config file
+   {get_config_file_path()}.
 3. Review the Config file and make any necessary changes making sure the
    locations are correct and the issuer name is set.\n
 Example server.ovpn lines:
-\tauth-user-pass-verify /etc/config/openvpn_otp_auth/{Path(__file__).name} via-file
+\tauth-user-pass-verify /etc/config/openvpn_otp_auth/openvpn-otp-auth via-file
 \tauth-gen-token 0 external-auth\n\n""",
-    epilog=(
-        "Put the username in quotes if getting errors with not enough or too many "
-        "arguments. When new users are created or TOTP is changed, the TOTP QR Code "
-        "and URL will display and also be saved to a file called <name>.totp"
-    ),
-    formatter_class=argparse.RawDescriptionHelpFormatter,
-)
+        epilog=(
+            "Put the username in quotes if getting errors with not enough or too many "
+            "arguments. When new users are created or TOTP is changed, the TOTP QR Code "
+            "and URL will display and also be saved to a file called <name>.totp"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
 
-ovpnauth = parser.add_mutually_exclusive_group(required=True)
-ovpnauth.add_argument(
-    "filename", help="Called by OpenVPN with the file of login credentials", nargs="?"
-)
-ovpnauth.add_argument(
-    "--install",
-    help="Generate the config file with default values",
-    action="store_true",
-)
-ovpnauth.add_argument(
-    "--adduser",
-    help="Add a new user",
-    type=str,
-    nargs=1,
-    metavar=("<username>"),
-)
-ovpnauth.add_argument(
-    "--deluser",
-    help="Delete an existing user",
-    type=str,
-    nargs=1,
-    metavar=("<username>"),
-)
-ovpnauth.add_argument(
-    "--changepass",
-    help="Change the password for an existing user",
-    type=str,
-    nargs=1,
-    metavar=("<username>"),
-)
-ovpnauth.add_argument(
-    "--changetotp",
-    help="Generate a new TOTP for an existing user",
-    type=str,
-    nargs=1,
-    metavar=("<username>"),
-)
-ovpnauth.add_argument(
-    "--showtotp",
-    help="Show the TOTP for an existing user",
-    type=str,
-    nargs=1,
-    metavar=("<username>"),
-)
-ovpnauth.add_argument("--listusers", help="List all users", action="store_true")
-parser.add_argument(
-    "--debug",
-    help="Enable debug logging",
-    action="store_true",
-)
+    ovpnauth = parser.add_mutually_exclusive_group(required=True)
+    ovpnauth.add_argument(
+        "filename", help="Called by OpenVPN with the file of login credentials", nargs="?"
+    )
+    ovpnauth.add_argument(
+        "--install",
+        help="Generate the config file with default values",
+        action="store_true",
+    )
+    ovpnauth.add_argument(
+        "--adduser",
+        help="Add a new user",
+        type=str,
+        nargs=1,
+        metavar=("<username>"),
+    )
+    ovpnauth.add_argument(
+        "--deluser",
+        help="Delete an existing user",
+        type=str,
+        nargs=1,
+        metavar=("<username>"),
+    )
+    ovpnauth.add_argument(
+        "--changepass",
+        help="Change the password for an existing user",
+        type=str,
+        nargs=1,
+        metavar=("<username>"),
+    )
+    ovpnauth.add_argument(
+        "--changetotp",
+        help="Generate a new TOTP for an existing user",
+        type=str,
+        nargs=1,
+        metavar=("<username>"),
+    )
+    ovpnauth.add_argument(
+        "--showtotp",
+        help="Show the TOTP for an existing user",
+        type=str,
+        nargs=1,
+        metavar=("<username>"),
+    )
+    ovpnauth.add_argument("--listusers", help="List all users", action="store_true")
+    parser.add_argument(
+        "--debug",
+        help="Enable debug logging",
+        action="store_true",
+    )
+    return parser
 
-args = parser.parse_args()
 
-# Set log level to DEBUG if --debug is passed
-if args.debug:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments without doing so at module import time."""
+    return build_parser().parse_args(argv)
+
+
+def configure_debug_logging(args: argparse.Namespace) -> None:
+    """Enable debug logging when requested by command-line arguments."""
+    if not args.debug:
+        return
     logger.setLevel(logging.DEBUG)
     stdout_handler.setLevel(logging.DEBUG)
     if file_handler is not None:
@@ -151,7 +178,6 @@ if args.debug:
     setup_logger.setLevel(logging.DEBUG)
     setup_stdout_handler.setLevel(logging.DEBUG)
 
-# print(f"Debug: args: {args}")
 
 SESSION_DB_SCHEMA = (
     "CREATE TABLE sessions (username VARCHAR PRIMARY KEY, vpn_client VARCHAR, "
@@ -232,31 +258,31 @@ class OpenVPNOTPAuth:
             If the configuration file is not found.
 
         """
-        file_path = f"{Path(__file__).resolve().with_suffix('.conf')}"
+        file_path = get_config_file_path()
+        default_config_dir = get_config_dir()
         config = configparser.ConfigParser()
         config.read(file_path)
         try:
             ovpnauth_conf = config["OpenVPN OTP Auth"]
         except KeyError:
             logger.error(
-                "Config file not found. You must run 'python %s --install' before "
+                "Config file not found at %s. You must run '%s --install' before "
                 "running the script.",
-                Path(__file__).name,
+                file_path,
+                Path(sys.argv[0]) if sys.argv else "openvpn-otp-auth",
             )
             sys.exit(1)
         else:
             self.issuer = self._strip_quotes(ovpnauth_conf.get("ISSUER", "OpenVPN OTP Auth Issuer"))
             self.totp_out_path = self._strip_quotes(
-                ovpnauth_conf.get("TOTP_OUT_PATH", f"{Path(__file__).resolve().parent}")
+                ovpnauth_conf.get("TOTP_OUT_PATH", f"{default_config_dir}")
             )
             self.session_duration = ovpnauth_conf.getint("SESSION_DURATION", 164)
             self.user_db_file = self._strip_quotes(
-                ovpnauth_conf.get("USER_DB_FILE", f"{Path(__file__).resolve().parent}/users.db")
+                ovpnauth_conf.get("USER_DB_FILE", f"{default_config_dir / 'users.db'}")
             )
             self.session_db_file = self._strip_quotes(
-                ovpnauth_conf.get(
-                    "SESSION_DB_FILE", f"{Path(__file__).resolve().parent}/sessions.db"
-                )
+                ovpnauth_conf.get("SESSION_DB_FILE", f"{default_config_dir / 'sessions.db'}")
             )
 
     def _get_db_cursor(
@@ -646,15 +672,17 @@ class OpenVPNOTPAuth:
             Exits with code 99 after creating or detecting the config file.
 
         """
-        file_path = f"{Path(__file__).resolve().with_suffix('.conf')}"
-        if Path(file_path).is_file():
+        file_path = get_config_file_path()
+        default_config_dir = get_config_dir()
+        if file_path.is_file():
             setup_logger.info("Config file already exists: %s", file_path)
         else:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             issuer = "OpenVPN OTP Auth Issuer"
-            totp_out_path = f"{Path(__file__).resolve().parent}"
+            totp_out_path = f"{default_config_dir}"
             session_duration = "164"
-            user_db_file = f"{Path(__file__).resolve().parent}/users.db"
-            session_db_file = f"{Path(__file__).resolve().parent}/sessions.db"
+            user_db_file = f"{default_config_dir / 'users.db'}"
+            session_db_file = f"{default_config_dir / 'sessions.db'}"
             config = configparser.ConfigParser(allow_no_value=True)
             config["OpenVPN OTP Auth"] = {
                 "; Set to your business name or name of your VPN": "",
@@ -666,7 +694,7 @@ class OpenVPNOTPAuth:
                 "USER_DB_FILE": f"{user_db_file}",
                 "SESSION_DB_FILE": f"{session_db_file}",
             }
-            with Path(f"{file_path}").open("w") as configfile:
+            with file_path.open("w") as configfile:
                 config.write(configfile)
             setup_logger.info("Config file created: %s", file_path)
         sys.exit(99)
@@ -886,7 +914,8 @@ class OpenVPNOTPAuth:
         sys.exit(99)
 
 
-if __name__ == "__main__":
+def run_command(args: argparse.Namespace) -> int:
+    """Run the parsed command-line action."""
     if not args.filename:
         setup_logger.info("Running %s %s", Path(__file__).name, VERSION)
         setup_logger.debug("Arguments: %s", args)
@@ -910,4 +939,21 @@ if __name__ == "__main__":
             auth.showtotp()
         elif args.listusers:
             auth.listusers()
-        sys.exit(99)
+        return 99
+    return 99
+
+
+def cli(argv: list[str] | None = None) -> int:
+    """Console script entry point for OpenVPN OTP Auth."""
+    parsed_args = parse_args(argv)
+    configure_debug_logging(parsed_args)
+    try:
+        return run_command(parsed_args)
+    except SystemExit as e:
+        if isinstance(e.code, int):
+            return e.code
+        raise
+
+
+if __name__ == "__main__":
+    sys.exit(cli())

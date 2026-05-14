@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import importlib.metadata
 import logging
 from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+import tomllib
 from typing import Any
 import warnings
 
@@ -17,12 +19,118 @@ import pyotp
 import pytest
 
 
-def test_module_loads_with_controlled_cli_args(load_module: Any) -> None:
-    """The script should be importable when provided valid CLI arguments."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+def test_module_import_does_not_parse_command_line(load_module: Any) -> None:
+    """Importing the module should not parse CLI arguments or exit."""
+    module = load_module([])
 
     assert module.VERSION
+    assert not hasattr(module, "args")
+
+
+def test_parse_args_handles_controlled_cli_args(load_module: Any) -> None:
+    """The script should expose explicit parsing for controlled CLI arguments."""
+    module = load_module(["openvpn-otp-auth", "--install"])
+
     assert module.args.install is True
+
+
+def test_cli_dispatches_install_action(monkeypatch: pytest.MonkeyPatch, load_module: Any) -> None:
+    """The package console entry point should dispatch through cli()."""
+    module = load_module([])
+    calls: list[argparse.Namespace] = []
+
+    class StubAuth:
+        """Capture the parsed arguments passed through CLI dispatch."""
+
+        def __init__(self, args: argparse.Namespace, install: bool = False) -> None:
+            """Record constructor inputs."""
+            calls.append(args)
+            assert install is True
+
+        def install(self) -> None:
+            """Simulate the install command exit behavior."""
+            raise SystemExit(99)
+
+    monkeypatch.setattr(module, "OpenVPNOTPAuth", StubAuth)
+
+    assert module.cli(["--install"]) == 99
+    assert calls[0].install is True
+
+
+def test_config_path_uses_fixed_config_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any
+) -> None:
+    """Packaged console entry points should use the fixed config directory."""
+    module = load_module([])
+    monkeypatch.setattr(module, "CONFIG_DIR", tmp_path)
+
+    assert module.get_config_file_path() == tmp_path / "openvpn_otp_auth.conf"
+
+
+def test_install_defaults_to_fixed_config_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any
+) -> None:
+    """The packaged install command should write config to the fixed config directory."""
+    module = load_module([])
+    config_dir = tmp_path / "openvpn_otp_auth"
+    monkeypatch.setattr(module, "CONFIG_DIR", config_dir)
+    auth = module.OpenVPNOTPAuth(argparse.Namespace(install=True), install=True)
+
+    with pytest.raises(SystemExit) as exc_info:
+        auth.install()
+
+    config_file = config_dir / "openvpn_otp_auth.conf"
+    config_text = config_file.read_text()
+    assert exc_info.value.code == 99
+    assert f"totp_out_path = {config_dir}" in config_text
+    assert f"user_db_file = {config_dir / 'users.db'}" in config_text
+    assert f"session_db_file = {config_dir / 'sessions.db'}" in config_text
+
+
+def test_load_config_defaults_to_fixed_config_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any
+) -> None:
+    """Missing optional storage config should default under the fixed config directory."""
+    module = load_module([])
+    monkeypatch.setattr(module, "CONFIG_DIR", tmp_path)
+    (tmp_path / "openvpn_otp_auth.conf").write_text(
+        "[OpenVPN OTP Auth]\nISSUER = Packaged Auth\nSESSION_DURATION = 12\n"
+    )
+    auth = module.OpenVPNOTPAuth(argparse.Namespace(filename="credentials"))
+
+    assert auth.issuer == "Packaged Auth"
+    assert auth.totp_out_path == str(tmp_path)
+    assert auth.user_db_file == str(tmp_path / "users.db")
+    assert auth.session_db_file == str(tmp_path / "sessions.db")
+
+
+def test_pyproject_declares_pypi_console_entrypoint_and_metadata() -> None:
+    """Project metadata should be complete enough for a PyPI console package."""
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text())
+    project = pyproject["project"]
+
+    assert project["scripts"]["openvpn-otp-auth"] == "openvpn_otp_auth:cli"
+    assert pyproject["tool"]["setuptools"]["package-dir"] == {"": "src"}
+    assert pyproject["tool"]["setuptools"]["packages"]["find"]["where"] == ["src"]
+    assert pyproject["tool"]["setuptools"]["dynamic"]["version"] == {
+        "attr": "openvpn_otp_auth._version.VERSION"
+    }
+    assert project["urls"]["Homepage"] == "https://github.com/Snuffy2/openvpn_otp_auth"
+    assert project["urls"]["Issues"] == "https://github.com/Snuffy2/openvpn_otp_auth/issues"
+    assert "Environment :: Console" in project["classifiers"]
+    assert "Topic :: System :: Networking" in project["classifiers"]
+    assert "build" in pyproject["dependency-groups"]["dev"]
+    assert "twine" in pyproject["dependency-groups"]["dev"]
+
+
+def test_installed_metadata_exposes_console_entrypoint() -> None:
+    """Editable installs should expose the PyPI console script entry point."""
+    entry_points = importlib.metadata.entry_points(group="console_scripts")
+
+    assert any(
+        entry_point.name == "openvpn-otp-auth" and entry_point.value == "openvpn_otp_auth:cli"
+        for entry_point in entry_points
+    )
 
 
 def test_debug_import_handles_unavailable_log_file(
@@ -36,7 +144,7 @@ def test_debug_import_handles_unavailable_log_file(
 
     monkeypatch.setattr(logging, "FileHandler", blocked_file_handler)
 
-    module = load_module(["openvpn_otp_auth.py", "--debug", "credentials"])
+    module = load_module(["openvpn-otp-auth", "--debug", "credentials"])
 
     assert module.args.debug is True
 
@@ -47,7 +155,7 @@ def test_main_uses_parsed_filename_when_debug_precedes_file(
     """The auth path should come from argparse, not the raw first argv item."""
     credentials = tmp_path / "credentials.txt"
     credentials.write_text("alice\nnot-scrv1\n")
-    module = load_module(["openvpn_otp_auth.py", "--debug", str(credentials)])
+    module = load_module(["openvpn-otp-auth", "--debug", str(credentials)])
     auth = module.OpenVPNOTPAuth(module.args, install=True)
     monkeypatch.setattr(auth, "get_user", lambda _username: ("alice", "hash", "secret", "uri"))
 
@@ -67,7 +175,7 @@ def test_initial_scrv1_auth_accepts_valid_password_and_totp(
     encoded_otp = base64.b64encode(otp.encode()).decode()
     credentials = tmp_path / "credentials.txt"
     credentials.write_text(f"alice\nSCRV1:{encoded_password}:{encoded_otp}\n")
-    module = load_module(["openvpn_otp_auth.py", str(credentials)])
+    module = load_module(["openvpn-otp-auth", str(credentials)])
     auth = module.OpenVPNOTPAuth(module.args, install=True)
     password_hash = auth.ph.hash("correct-password")
     stored_sessions: list[tuple[str, str, str]] = []
@@ -112,7 +220,7 @@ def test_changetotp_rewrites_existing_totp_file_when_qr_generation_fails(
     insert_user: Any,
 ) -> None:
     """TOTP rotation should not leave stale QR/file contents behind."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, argparse.Namespace(changetotp=["alice"]), tmp_path)
     insert_user(auth, stored_otp_seed="old-secret", totp_uri="old-uri")
     totp_file = tmp_path / "alice.totp"
@@ -146,7 +254,7 @@ def test_deluser_removes_legacy_path_traversal_username_without_unlinking_outsid
     insert_user: Any,
 ) -> None:
     """Legacy unsafe usernames should be removed without unsafe file deletion."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, argparse.Namespace(deluser=["../outside"]), tmp_path)
     outside_file = tmp_path.parent / "outside.totp"
     outside_file.write_text("do not delete")
@@ -176,7 +284,7 @@ def test_changetotp_updates_legacy_path_traversal_username_without_writing_outsi
     insert_user: Any,
 ) -> None:
     """Legacy unsafe usernames should get new TOTP secrets without unsafe file writes."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, argparse.Namespace(changetotp=["../outside"]), tmp_path)
     outside_file = tmp_path.parent / "outside.totp"
     outside_file.write_text("do not overwrite")
@@ -203,7 +311,7 @@ def test_verify_totp_accepts_current_code(
     monkeypatch: pytest.MonkeyPatch, load_module: Any
 ) -> None:
     """TOTP verification should accept the current valid one-time password."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = module.OpenVPNOTPAuth(module.args, install=True)
     totp_seed = pyotp.random_base32()
 
@@ -214,7 +322,7 @@ def test_store_session_persists_session(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any
 ) -> None:
     """Session storage should write retrievable SQLite session state."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = module.OpenVPNOTPAuth(module.args, install=True)
     auth.session_db_file = str(tmp_path / "sessions.db")
     created = module.datetime.datetime(2026, 5, 12, 10, 30, 0)
@@ -243,7 +351,7 @@ def test_get_session_returns_datetime_from_stored_session(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any, make_auth: Any
 ) -> None:
     """Session lookup should return parsed datetime values for validation."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, module.args, tmp_path)
     created = module.datetime.datetime(2026, 5, 12, 10, 30, 0)
     auth.store_session("alice", "OpenVPN Connect", "198.51.100.10", created)
@@ -252,11 +360,10 @@ def test_get_session_returns_datetime_from_stored_session(
 
 
 def test_load_config_reads_quoted_values(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any, script_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any
 ) -> None:
     """Configuration loading should strip shell-style quotes from path values."""
-    config_file = script_path.with_suffix(".conf")
-    config_text = config_file.read_text() if config_file.exists() else None
+    config_file = tmp_path / "openvpn_otp_auth.conf"
     config_file.write_text(
         "\n".join(
             [
@@ -270,14 +377,9 @@ def test_load_config_reads_quoted_values(
             ]
         )
     )
-    try:
-        module = load_module(["openvpn_otp_auth.py", "credentials"])
-        auth = module.OpenVPNOTPAuth(module.args)
-    finally:
-        if config_text is None:
-            config_file.unlink(missing_ok=True)
-        else:
-            config_file.write_text(config_text)
+    module = load_module(["openvpn-otp-auth", "credentials"])
+    monkeypatch.setattr(module, "CONFIG_DIR", tmp_path)
+    auth = module.OpenVPNOTPAuth(module.args)
 
     assert auth.issuer == "Quoted VPN"
     assert auth.totp_out_path == str(tmp_path)
@@ -295,7 +397,7 @@ def test_totp_file_path_rejects_unsafe_usernames(
     make_auth: Any,
 ) -> None:
     """TOTP file paths should reject empty, traversal, nested, and absolute names."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, module.args, tmp_path)
 
     with pytest.raises(ValueError):
@@ -306,7 +408,7 @@ def test_write_totp_file_appends_uri_after_qr_success(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any, make_auth: Any
 ) -> None:
     """Successful QR generation should append the provisioning URI to the TOTP file."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, module.args, tmp_path)
 
     def write_qr(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -329,7 +431,7 @@ def test_user_lookup_and_hash_update_use_database(
     insert_user: Any,
 ) -> None:
     """User helpers should read existence and update password hashes in SQLite."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, module.args, tmp_path)
     insert_user(auth)
 
@@ -346,7 +448,7 @@ def test_get_db_cursor_rejects_missing_path(
     monkeypatch: pytest.MonkeyPatch, load_module: Any
 ) -> None:
     """Database cursor helper should reject an unset database file path."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = module.OpenVPNOTPAuth(module.args, install=True)
 
     with pytest.raises(ValueError):
@@ -357,7 +459,7 @@ def test_get_db_cursor_logs_sqlite_errors(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any
 ) -> None:
     """Database cursor helper should surface SQLite errors for invalid paths."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = module.OpenVPNOTPAuth(module.args, install=True)
 
     with pytest.raises(sqlite3.Error):
@@ -368,7 +470,7 @@ def test_create_session_requires_openvpn_environment(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any, make_auth: Any
 ) -> None:
     """Session creation should fail when OpenVPN has not provided client metadata."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, module.args, tmp_path)
     monkeypatch.delenv("IV_GUI_VER", raising=False)
     monkeypatch.delenv("untrusted_ip", raising=False)
@@ -383,7 +485,7 @@ def test_validate_session_accepts_matching_session(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any, make_auth: Any
 ) -> None:
     """Session validation should accept matching client, IP, and fresh timestamp."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, module.args, tmp_path, session_duration=1)
     monkeypatch.setenv("IV_GUI_VER", "OpenVPN Connect")
     monkeypatch.setenv("untrusted_ip", "198.51.100.10")
@@ -418,7 +520,7 @@ def test_validate_session_rejects_changed_or_expired_session(
     created_offset_hours: int,
 ) -> None:
     """Session validation should reject changed clients, changed IPs, and expiry."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, module.args, tmp_path, session_duration=1)
     monkeypatch.setenv("IV_GUI_VER", "OpenVPN Connect")
     monkeypatch.setenv("untrusted_ip", "198.51.100.10")
@@ -439,7 +541,7 @@ def test_validate_session_rejects_missing_session(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any, make_auth: Any
 ) -> None:
     """Session validation should reject usernames without stored session state."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, module.args, tmp_path)
 
     with pytest.raises(SystemExit) as exc_info:
@@ -468,7 +570,7 @@ def test_main_rejects_invalid_auth_inputs(
     """Main auth should reject missing users, malformed credentials, and bad state."""
     credentials = tmp_path / "credentials.txt"
     credentials.write_text(f"alice\n{password_line}\n")
-    module = load_module(["openvpn_otp_auth.py", str(credentials)])
+    module = load_module(["openvpn-otp-auth", str(credentials)])
     auth = module.OpenVPNOTPAuth(module.args, install=True)
     monkeypatch.setattr(auth, "get_user", lambda _username: stored_user)
     if session_state is None:
@@ -490,7 +592,7 @@ def test_main_rehashes_password_when_needed(
     encoded_password = base64.b64encode(b"correct-password").decode()
     encoded_otp = base64.b64encode(b"123456").decode()
     credentials.write_text(f"alice\nSCRV1:{encoded_password}:{encoded_otp}\n")
-    module = load_module(["openvpn_otp_auth.py", str(credentials)])
+    module = load_module(["openvpn-otp-auth", str(credentials)])
     auth = module.OpenVPNOTPAuth(module.args, install=True)
     updated_hashes: list[str] = []
     monkeypatch.delenv("session_state", raising=False)
@@ -533,7 +635,7 @@ def test_main_authenticated_state_delegates_to_session_validation(
     """Authenticated OpenVPN renegotiation should validate the existing session."""
     credentials = tmp_path / "credentials.txt"
     credentials.write_text("alice\nignored\n")
-    module = load_module(["openvpn_otp_auth.py", str(credentials)])
+    module = load_module(["openvpn-otp-auth", str(credentials)])
     auth = module.OpenVPNOTPAuth(module.args, install=True)
     validated_users: list[str] = []
     monkeypatch.setattr(auth, "get_user", lambda _username: ("alice", "hash", "secret", "uri"))
@@ -560,7 +662,7 @@ def test_adduser_creates_database_row_and_totp_file(
     configure_auth_storage: Any,
 ) -> None:
     """Adding a user should persist credentials and write TOTP setup output."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = module.OpenVPNOTPAuth(argparse.Namespace(adduser=["alice"]), install=True)
     configure_auth_storage(auth, tmp_path)
     passwords = iter(["new-password", "new-password"])
@@ -602,7 +704,7 @@ def test_adduser_rejects_invalid_user_creation(
     passwords: list[str] | None,
 ) -> None:
     """Adding users should reject duplicates, password mismatches, and unsafe names."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, argparse.Namespace(adduser=[username]), tmp_path)
     if existing_username is not None:
         insert_user(auth, username=existing_username)
@@ -618,9 +720,13 @@ def test_adduser_rejects_invalid_user_creation(
         assert auth.get_user(username) is None
 
 
-def test_install_reports_existing_config(monkeypatch: pytest.MonkeyPatch, load_module: Any) -> None:
-    """Install should exit cleanly when the repository config already exists."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+def test_install_reports_existing_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any
+) -> None:
+    """Install should exit cleanly when the fixed config already exists."""
+    (tmp_path / "openvpn_otp_auth.conf").write_text("[OpenVPN OTP Auth]\n")
+    module = load_module(["openvpn-otp-auth", "--install"])
+    monkeypatch.setattr(module, "CONFIG_DIR", tmp_path)
     auth = module.OpenVPNOTPAuth(module.args, install=True)
 
     with pytest.raises(SystemExit) as exc_info:
@@ -637,7 +743,7 @@ def test_changepass_updates_existing_user(
     insert_user: Any,
 ) -> None:
     """Changing a password should replace the stored Argon2 hash."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, argparse.Namespace(changepass=["alice"]), tmp_path)
     insert_user(auth, stored_hash=auth.ph.hash("old-password"))
     passwords = iter(["new-password", "new-password"])
@@ -662,7 +768,7 @@ def test_changepass_rejects_missing_user_or_mismatch(
     passwords: list[str] | None,
 ) -> None:
     """Changing a password should reject missing users and mismatched confirmation."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, argparse.Namespace(changepass=["alice"]), tmp_path)
     if passwords is not None:
         insert_user(auth)
@@ -683,7 +789,7 @@ def test_deluser_removes_safe_totp_file(
     insert_user: Any,
 ) -> None:
     """Deleting a normal user should remove both the row and the TOTP file."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, argparse.Namespace(deluser=["alice"]), tmp_path)
     insert_user(auth)
     totp_file = tmp_path / "alice.totp"
@@ -705,7 +811,7 @@ def test_showtotp_outputs_existing_file(
     insert_user: Any,
 ) -> None:
     """Showing a TOTP should read the stored setup file for an existing user."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, argparse.Namespace(showtotp=["alice"]), tmp_path)
     insert_user(auth)
     (tmp_path / "alice.totp").write_text("totp-output")
@@ -726,7 +832,7 @@ def test_showtotp_handles_missing_or_unsafe_user(
     username: str,
 ) -> None:
     """Showing a TOTP should exit cleanly for missing users and unsafe legacy names."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, argparse.Namespace(showtotp=[username]), tmp_path)
     if username != "missing":
         insert_user(auth, username=username)
@@ -745,7 +851,7 @@ def test_listusers_orders_usernames(
     insert_user: Any,
 ) -> None:
     """Listing users should query users in ascending username order."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, argparse.Namespace(listusers=True), tmp_path)
     logged_messages: list[str] = []
     insert_user(auth, username="charlie")
@@ -768,7 +874,7 @@ def test_get_db_cursor_creates_schema(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any
 ) -> None:
     """Database cursor helper should create missing SQLite files with the schema."""
-    module = load_module(["openvpn_otp_auth.py", "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
     auth = module.OpenVPNOTPAuth(module.args, install=True)
     db_path = tmp_path / "users.db"
     auth.user_db_file = str(db_path)
