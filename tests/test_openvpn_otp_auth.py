@@ -57,50 +57,45 @@ def test_cli_dispatches_install_action(monkeypatch: pytest.MonkeyPatch, load_mod
     assert calls[0].install is True
 
 
-def test_config_path_uses_invoked_console_script_location(
+def test_config_path_uses_fixed_config_directory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any
 ) -> None:
-    """Packaged console entry points should use the invoked executable directory."""
+    """Packaged console entry points should use the fixed config directory."""
     module = load_module([])
-    console_script = tmp_path / "openvpn-otp-auth"
-    console_script.touch()
-    monkeypatch.setattr(sys, "argv", [str(console_script), "--install"])
+    monkeypatch.setattr(module, "CONFIG_DIR", tmp_path)
 
     assert module.get_config_file_path() == tmp_path / "openvpn_otp_auth.conf"
 
 
-def test_install_defaults_to_invoked_console_script_directory(
+def test_install_defaults_to_fixed_config_directory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any
 ) -> None:
-    """The packaged install command should not write config beside site-packages code."""
+    """The packaged install command should write config to the fixed config directory."""
     module = load_module([])
-    console_script = tmp_path / "openvpn-otp-auth"
-    console_script.touch()
-    monkeypatch.setattr(sys, "argv", [str(console_script), "--install"])
+    config_dir = tmp_path / "openvpn_otp_auth"
+    monkeypatch.setattr(module, "CONFIG_DIR", config_dir)
     auth = module.OpenVPNOTPAuth(argparse.Namespace(install=True), install=True)
 
     with pytest.raises(SystemExit) as exc_info:
         auth.install()
 
-    config_file = tmp_path / "openvpn_otp_auth.conf"
+    config_file = config_dir / "openvpn_otp_auth.conf"
     config_text = config_file.read_text()
     assert exc_info.value.code == 99
-    assert f"totp_out_path = {tmp_path}" in config_text
-    assert f"user_db_file = {tmp_path / 'users.db'}" in config_text
-    assert f"session_db_file = {tmp_path / 'sessions.db'}" in config_text
+    assert f"totp_out_path = {config_dir}" in config_text
+    assert f"user_db_file = {config_dir / 'users.db'}" in config_text
+    assert f"session_db_file = {config_dir / 'sessions.db'}" in config_text
 
 
-def test_load_config_defaults_to_invoked_console_script_directory(
+def test_load_config_defaults_to_fixed_config_directory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any
 ) -> None:
-    """Missing optional storage config should default beside the invoked console script."""
+    """Missing optional storage config should default under the fixed config directory."""
     module = load_module([])
-    console_script = tmp_path / "openvpn-otp-auth"
-    console_script.touch()
+    monkeypatch.setattr(module, "CONFIG_DIR", tmp_path)
     (tmp_path / "openvpn_otp_auth.conf").write_text(
         "[OpenVPN OTP Auth]\nISSUER = Packaged Auth\nSESSION_DURATION = 12\n"
     )
-    monkeypatch.setattr(sys, "argv", [str(console_script), "credentials"])
     auth = module.OpenVPNOTPAuth(argparse.Namespace(filename="credentials"))
 
     assert auth.issuer == "Packaged Auth"
@@ -143,6 +138,7 @@ def test_readme_documents_pypi_install_and_console_command() -> None:
     readme = Path("README.md").read_text()
 
     assert "uv tool install openvpn-otp-auth" in readme
+    assert "default OpenWrt config file in `/etc/config/openvpn_otp_auth`" in readme
     assert "openvpn-otp-auth --install" in readme
     assert "uv sync --all-groups" in readme
     assert "uv run python -m openvpn_otp_auth --help" in readme
@@ -380,8 +376,6 @@ def test_load_config_reads_quoted_values(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any
 ) -> None:
     """Configuration loading should strip shell-style quotes from path values."""
-    console_script = tmp_path / "openvpn-otp-auth"
-    console_script.touch()
     config_file = tmp_path / "openvpn_otp_auth.conf"
     config_file.write_text(
         "\n".join(
@@ -396,7 +390,8 @@ def test_load_config_reads_quoted_values(
             ]
         )
     )
-    module = load_module([str(console_script), "credentials"])
+    module = load_module(["openvpn-otp-auth", "credentials"])
+    monkeypatch.setattr(module, "CONFIG_DIR", tmp_path)
     auth = module.OpenVPNOTPAuth(module.args)
 
     assert auth.issuer == "Quoted VPN"
@@ -741,11 +736,10 @@ def test_adduser_rejects_invalid_user_creation(
 def test_install_reports_existing_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any
 ) -> None:
-    """Install should exit cleanly when the invoked-script config already exists."""
-    console_script = tmp_path / "openvpn-otp-auth"
-    console_script.touch()
+    """Install should exit cleanly when the fixed config already exists."""
     (tmp_path / "openvpn_otp_auth.conf").write_text("[OpenVPN OTP Auth]\n")
-    module = load_module([str(console_script), "--install"])
+    module = load_module(["openvpn-otp-auth", "--install"])
+    monkeypatch.setattr(module, "CONFIG_DIR", tmp_path)
     auth = module.OpenVPNOTPAuth(module.args, install=True)
 
     with pytest.raises(SystemExit) as exc_info:

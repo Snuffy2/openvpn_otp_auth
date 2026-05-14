@@ -18,7 +18,6 @@ import logging
 import os
 from pathlib import Path
 import pwd
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -29,25 +28,13 @@ import pyotp
 
 from ._version import VERSION
 
+CONFIG_DIR = Path("/etc/config/openvpn_otp_auth")
 CONFIG_FILENAME = "openvpn_otp_auth.conf"
-
-
-def get_invoked_script_path() -> Path:
-    """Return the path used to invoke the script or console entry point."""
-    if not sys.argv:
-        return Path(__file__).resolve()
-    argv0 = Path(sys.argv[0])
-    if argv0.parent != Path():
-        return argv0.expanduser().absolute()
-    resolved_argv0 = shutil.which(sys.argv[0])
-    if resolved_argv0 is not None:
-        return Path(resolved_argv0)
-    return Path(__file__).resolve()
 
 
 def get_config_dir() -> Path:
     """Return the directory that contains runtime config and default storage files."""
-    return get_invoked_script_path().parent
+    return CONFIG_DIR
 
 
 def get_config_file_path() -> Path:
@@ -78,6 +65,8 @@ try:
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
+except FileNotFoundError:
+    pass
 except PermissionError as e:
     logger.warning("Could not write to logfile: %s", e)
 
@@ -103,11 +92,10 @@ multi-factor authentication (MFA) [TOTP] for use with auth-user-pass-verify
 via-file option.\n
 Current config path: {get_config_file_path()}
 Installation:
-1. Install this package with pip, or place the openvpn-otp-auth script in a
-   location that ideally won't be removed by system updates.
+1. Install this package with 'uv tool install openvpn-otp-auth'.
 2. Run: 'openvpn-otp-auth --install' or 'python -m openvpn_otp_auth --install'
    to build the config file
-   {CONFIG_FILENAME} in the same folder as the invoked script.
+   {get_config_file_path()}.
 3. Review the Config file and make any necessary changes making sure the
    locations are correct and the issuer name is set.\n
 Example server.ovpn lines:
@@ -279,9 +267,9 @@ class OpenVPNOTPAuth:
         except KeyError:
             logger.error(
                 "Config file not found at %s. You must run '%s --install' before "
-                "running the script from that location.",
+                "running the script.",
                 file_path,
-                get_invoked_script_path(),
+                Path(sys.argv[0]) if sys.argv else "openvpn-otp-auth",
             )
             sys.exit(1)
         else:
@@ -689,6 +677,7 @@ class OpenVPNOTPAuth:
         if file_path.is_file():
             setup_logger.info("Config file already exists: %s", file_path)
         else:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             issuer = "OpenVPN OTP Auth Issuer"
             totp_out_path = f"{default_config_dir}"
             session_duration = "164"
