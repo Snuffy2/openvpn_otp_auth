@@ -13,8 +13,11 @@ Install the PyPI package as an isolated command-line tool with
 uv tool install openvpn-otp-auth
 ```
 
-Then create the default OpenWrt config file in `/etc/config/openvpn_otp_auth`.
-This is also the path the helper reads at runtime:
+Create the OpenWrt config file at `/etc/config/openvpn_otp_auth`. This is the
+path the helper reads at runtime. Use the
+[example config](#example-openwrt-config) below as a starting point.
+
+If you prefer to generate the file, run:
 
 ```bash
 openvpn-otp-auth --install
@@ -22,9 +25,9 @@ openvpn-otp-auth --install
 
 If the current user cannot write to `/etc/config`, run the command with the
 needed privileges. If `sudo` cannot find the uv-installed command, use the full
-path shown by `uv tool dir --bin`.
+path shown by `uv tool dir --bin`. Review the generated config before using it.
 
-Review the generated `openvpn_otp_auth.conf` and make any necessary changes so
+Review `openvpn_otp_auth.conf` and make any necessary changes so
 the storage locations are correct and the issuer name is set.
 
 For local development, sync the checkout with uv and run the package module or
@@ -38,6 +41,8 @@ uv run openvpn-otp-auth --help
 
 The generated config defaults the SQLite databases and TOTP output files under
 `/etc/config/openvpn_otp_auth` too.
+
+### Example OpenWrt config
 
 <details><summary><h3>Default openvpn_otp_auth.conf (Created by running: openvpn-otp-auth --install)</h3></summary>
 

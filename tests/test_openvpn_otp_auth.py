@@ -138,7 +138,8 @@ def test_readme_documents_pypi_install_and_console_command() -> None:
     readme = Path("README.md").read_text()
 
     assert "uv tool install openvpn-otp-auth" in readme
-    assert "default OpenWrt config file in `/etc/config/openvpn_otp_auth`" in readme
+    assert "Create the OpenWrt config file at `/etc/config/openvpn_otp_auth`" in readme
+    assert "[example config](#example-openwrt-config)" in readme
     assert "openvpn-otp-auth --install" in readme
     assert "uv sync --all-groups" in readme
     assert "uv run python -m openvpn_otp_auth --help" in readme
