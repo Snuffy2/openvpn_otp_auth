@@ -110,7 +110,11 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    if: github.event.repository.fork == false && github.event_name == 'release'
+    if: |
+      always() &&
+      needs.build.result == 'success' &&
+      github.event.repository.fork == false &&
+      github.event_name == 'release'
     needs: build
     runs-on: ubuntu-latest
     environment: pypi
@@ -129,7 +133,11 @@ jobs:
 
   publish_testpypi:
     name: Publish to TestPyPI
-    if: github.event.repository.fork == false && github.event_name == 'workflow_dispatch'
+    if: |
+      always() &&
+      needs.build.result == 'success' &&
+      github.event.repository.fork == false &&
+      github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
     environment: testpypi
