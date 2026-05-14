@@ -2,10 +2,13 @@
 
 [Full report](https://htmlpreview.github.io/?https://github.com/Snuffy2/openvpn_otp_auth/blob/python-coverage-comment-action-data/htmlcov/index.html)
 
-| Name                  |    Stmts |     Miss |   Branch |   BrPart |   Cover |   Missing |
-|---------------------- | -------: | -------: | -------: | -------: | ------: | --------: |
-| openvpn\_otp\_auth.py |      379 |       42 |       80 |        7 |     85% |240-246, 521-523, 538-540, 542-543, 651, 720, 737-738, 756, 808-809, 855-856, 890-913 |
-| **TOTAL**             |  **379** |   **42** |   **80** |    **7** | **85%** |           |
+| Name                                   |    Stmts |     Miss |   Branch |   BrPart |   Cover |   Missing |
+|--------------------------------------- | -------: | -------: | -------: | -------: | ------: | --------: |
+| src/openvpn\_otp\_auth/\_\_init\_\_.py |        5 |        2 |        0 |        0 |     60% |      9-11 |
+| src/openvpn\_otp\_auth/\_\_main\_\_.py |        3 |        3 |        2 |        0 |      0% |       3-6 |
+| src/openvpn\_otp\_auth/\_version.py    |        1 |        0 |        0 |        0 |    100% |           |
+| src/openvpn\_otp\_auth/main.py         |      407 |       48 |       82 |       10 |     85% |65-67, 174-179, 267-274, 547-549, 564-566, 568-569, 748, 765-766, 784, 836-837, 883-884, 923, 927-943, 955, 959 |
+| **TOTAL**                              |  **416** |   **53** |   **84** |   **10** | **84%** |           |
 
 
 ## Setup coverage badge
