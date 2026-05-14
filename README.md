@@ -50,6 +50,8 @@ session_db_file = /etc/config/openvpn_otp_auth/sessions.db
 
 <details><summary><h3>Example server.ovpn (incomplete)</h3></summary>
 
+#### Use the installed uv tool executable path in the OpenVPN server configuration. Run `uv tool dir --bin` and replace `<uv-tool-bin>` in the example below with that directory.
+
 ```
 mode server
 server xx.yy.zz.0 255.255.255.0
@@ -67,7 +69,7 @@ persist-tun
 user openvpn
 group openvpn
 script-security 2
-auth-user-pass-verify /etc/config/openvpn_otp_auth/openvpn-otp-auth via-file
+auth-user-pass-verify <uv-tool-bin>/openvpn-otp-auth via-file
 auth-gen-token 0 external-auth
 reneg-sec 3600
 keepalive 10 60
