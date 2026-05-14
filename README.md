@@ -23,7 +23,13 @@ the storage locations are correct and the issuer name is set.
 
 For systems that need a stable executable under `/etc/config/openvpn_otp_auth`,
 copy or symlink the installed `openvpn-otp-auth` console script there and point
-OpenVPN at that path.
+OpenVPN at that path. Run `--install` through that copied or symlinked path so
+the generated config and default storage paths are also under
+`/etc/config/openvpn_otp_auth`:
+
+```bash
+/etc/config/openvpn_otp_auth/openvpn-otp-auth --install
+```
 
 <details><summary><h3>Default openvpn_otp_auth.conf (Created by running: openvpn-otp-auth --install)</h3></summary>
 

@@ -57,6 +57,58 @@ def test_cli_dispatches_install_action(monkeypatch: pytest.MonkeyPatch, load_mod
     assert calls[0].install is True
 
 
+def test_config_path_uses_invoked_console_script_location(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any
+) -> None:
+    """Packaged console entry points should use the invoked executable directory."""
+    module = load_module([])
+    console_script = tmp_path / "openvpn-otp-auth"
+    console_script.touch()
+    monkeypatch.setattr(sys, "argv", [str(console_script), "--install"])
+
+    assert module.get_config_file_path() == tmp_path / "openvpn_otp_auth.conf"
+
+
+def test_install_defaults_to_invoked_console_script_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any
+) -> None:
+    """The packaged install command should not write config beside site-packages code."""
+    module = load_module([])
+    console_script = tmp_path / "openvpn-otp-auth"
+    console_script.touch()
+    monkeypatch.setattr(sys, "argv", [str(console_script), "--install"])
+    auth = module.OpenVPNOTPAuth(argparse.Namespace(install=True), install=True)
+
+    with pytest.raises(SystemExit) as exc_info:
+        auth.install()
+
+    config_file = tmp_path / "openvpn_otp_auth.conf"
+    config_text = config_file.read_text()
+    assert exc_info.value.code == 99
+    assert f"totp_out_path = {tmp_path}" in config_text
+    assert f"user_db_file = {tmp_path / 'users.db'}" in config_text
+    assert f"session_db_file = {tmp_path / 'sessions.db'}" in config_text
+
+
+def test_load_config_defaults_to_invoked_console_script_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, load_module: Any
+) -> None:
+    """Missing optional storage config should default beside the invoked console script."""
+    module = load_module([])
+    console_script = tmp_path / "openvpn-otp-auth"
+    console_script.touch()
+    (tmp_path / "openvpn_otp_auth.conf").write_text(
+        "[OpenVPN OTP Auth]\nISSUER = Packaged Auth\nSESSION_DURATION = 12\n"
+    )
+    monkeypatch.setattr(sys, "argv", [str(console_script), "credentials"])
+    auth = module.OpenVPNOTPAuth(argparse.Namespace(filename="credentials"))
+
+    assert auth.issuer == "Packaged Auth"
+    assert auth.totp_out_path == str(tmp_path)
+    assert auth.user_db_file == str(tmp_path / "users.db")
+    assert auth.session_db_file == str(tmp_path / "sessions.db")
+
+
 def test_pyproject_declares_pypi_console_entrypoint_and_metadata() -> None:
     """Project metadata should be complete enough for a PyPI console package."""
     pyproject = tomllib.loads(Path("pyproject.toml").read_text())

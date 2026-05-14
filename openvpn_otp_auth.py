@@ -18,6 +18,7 @@ import logging
 import os
 from pathlib import Path
 import pwd
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -27,6 +28,7 @@ from getpass_asterisk.getpass_asterisk import getpass_asterisk  # type: ignore[i
 import pyotp
 
 VERSION = "v1.4.0"
+CONFIG_FILENAME = "openvpn_otp_auth.conf"
 
 # Main logger setup (stdout + file)
 logger = logging.getLogger(__name__)
@@ -74,13 +76,13 @@ def build_parser() -> argparse.ArgumentParser:
         description=f"""OpenVPN python authentication script with password and
 multi-factor authentication (MFA) [TOTP] for use with auth-user-pass-verify
 via-file option.\n
-Current path: {Path(__file__).resolve().parent}
+Current config path: {get_config_file_path()}
 Installation:
 1. Install this package with pip, or place the {Path(__file__).name} script in
    a location that ideally won't be removed by system updates.
 2. Run: 'openvpn-otp-auth --install' or 'python {Path(__file__).name} --install'
    to build the config file
-   {Path(__file__).stem}.conf in the same folder as the python script.
+   {CONFIG_FILENAME} in the same folder as the invoked script.
 3. Review the Config file and make any necessary changes making sure the
    locations are correct and the issuer name is set.\n
 Example server.ovpn lines:
@@ -145,6 +147,29 @@ Example server.ovpn lines:
         action="store_true",
     )
     return parser
+
+
+def get_invoked_script_path() -> Path:
+    """Return the path used to invoke the script or console entry point."""
+    if not sys.argv:
+        return Path(__file__).resolve()
+    argv0 = Path(sys.argv[0])
+    if argv0.parent != Path():
+        return argv0.expanduser().absolute()
+    resolved_argv0 = shutil.which(sys.argv[0])
+    if resolved_argv0 is not None:
+        return Path(resolved_argv0)
+    return Path(__file__).resolve()
+
+
+def get_config_dir() -> Path:
+    """Return the directory that contains runtime config and default storage files."""
+    return get_invoked_script_path().parent
+
+
+def get_config_file_path() -> Path:
+    """Return the runtime config file path."""
+    return get_config_dir() / CONFIG_FILENAME
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -243,31 +268,31 @@ class OpenVPNOTPAuth:
             If the configuration file is not found.
 
         """
-        file_path = f"{Path(__file__).resolve().with_suffix('.conf')}"
+        file_path = get_config_file_path()
+        default_config_dir = get_config_dir()
         config = configparser.ConfigParser()
         config.read(file_path)
         try:
             ovpnauth_conf = config["OpenVPN OTP Auth"]
         except KeyError:
             logger.error(
-                "Config file not found. You must run 'python %s --install' before "
-                "running the script.",
-                Path(__file__).name,
+                "Config file not found at %s. You must run '%s --install' before "
+                "running the script from that location.",
+                file_path,
+                get_invoked_script_path(),
             )
             sys.exit(1)
         else:
             self.issuer = self._strip_quotes(ovpnauth_conf.get("ISSUER", "OpenVPN OTP Auth Issuer"))
             self.totp_out_path = self._strip_quotes(
-                ovpnauth_conf.get("TOTP_OUT_PATH", f"{Path(__file__).resolve().parent}")
+                ovpnauth_conf.get("TOTP_OUT_PATH", f"{default_config_dir}")
             )
             self.session_duration = ovpnauth_conf.getint("SESSION_DURATION", 164)
             self.user_db_file = self._strip_quotes(
-                ovpnauth_conf.get("USER_DB_FILE", f"{Path(__file__).resolve().parent}/users.db")
+                ovpnauth_conf.get("USER_DB_FILE", f"{default_config_dir / 'users.db'}")
             )
             self.session_db_file = self._strip_quotes(
-                ovpnauth_conf.get(
-                    "SESSION_DB_FILE", f"{Path(__file__).resolve().parent}/sessions.db"
-                )
+                ovpnauth_conf.get("SESSION_DB_FILE", f"{default_config_dir / 'sessions.db'}")
             )
 
     def _get_db_cursor(
@@ -657,15 +682,16 @@ class OpenVPNOTPAuth:
             Exits with code 99 after creating or detecting the config file.
 
         """
-        file_path = f"{Path(__file__).resolve().with_suffix('.conf')}"
-        if Path(file_path).is_file():
+        file_path = get_config_file_path()
+        default_config_dir = get_config_dir()
+        if file_path.is_file():
             setup_logger.info("Config file already exists: %s", file_path)
         else:
             issuer = "OpenVPN OTP Auth Issuer"
-            totp_out_path = f"{Path(__file__).resolve().parent}"
+            totp_out_path = f"{default_config_dir}"
             session_duration = "164"
-            user_db_file = f"{Path(__file__).resolve().parent}/users.db"
-            session_db_file = f"{Path(__file__).resolve().parent}/sessions.db"
+            user_db_file = f"{default_config_dir / 'users.db'}"
+            session_db_file = f"{default_config_dir / 'sessions.db'}"
             config = configparser.ConfigParser(allow_no_value=True)
             config["OpenVPN OTP Auth"] = {
                 "; Set to your business name or name of your VPN": "",
@@ -677,7 +703,7 @@ class OpenVPNOTPAuth:
                 "USER_DB_FILE": f"{user_db_file}",
                 "SESSION_DB_FILE": f"{session_db_file}",
             }
-            with Path(f"{file_path}").open("w") as configfile:
+            with file_path.open("w") as configfile:
                 config.write(configfile)
             setup_logger.info("Config file created: %s", file_path)
         sys.exit(99)
