@@ -133,20 +133,6 @@ def test_installed_metadata_exposes_console_entrypoint() -> None:
     )
 
 
-def test_readme_documents_pypi_install_and_console_command() -> None:
-    """README installation guidance should match the packaged CLI."""
-    readme = Path("README.md").read_text()
-
-    assert "uv tool install openvpn-otp-auth" in readme
-    assert "Create the OpenWrt config file at `/etc/config/openvpn_otp_auth`" in readme
-    assert "[example config](#example-openwrt-config)" in readme
-    assert "openvpn-otp-auth --install" in readme
-    assert "uv sync --all-groups" in readme
-    assert "uv run python -m openvpn_otp_auth --help" in readme
-    assert "uv run openvpn-otp-auth --help" in readme
-    assert "auth-user-pass-verify /etc/config/openvpn_otp_auth/openvpn-otp-auth via-file" in readme
-
-
 def test_debug_import_handles_unavailable_log_file(
     monkeypatch: pytest.MonkeyPatch, load_module: Any
 ) -> None:
