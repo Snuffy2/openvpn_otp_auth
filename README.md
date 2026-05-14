@@ -21,6 +21,14 @@ openvpn-otp-auth --install
 Review the generated `openvpn_otp_auth.conf` and make any necessary changes so
 the storage locations are correct and the issuer name is set.
 
+For local development, install the checkout in editable mode and run the package
+module or console script from that environment:
+
+```bash
+./.venv/bin/python -m pip install -e .
+./.venv/bin/python -m openvpn_otp_auth --help
+```
+
 For systems that need a stable executable under `/etc/config/openvpn_otp_auth`,
 copy or symlink the installed `openvpn-otp-auth` console script there and point
 OpenVPN at that path. Run `--install` through that copied or symlinked path so

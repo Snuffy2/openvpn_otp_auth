@@ -15,20 +15,23 @@ import pytest
 
 @pytest.fixture
 def script_path() -> Path:
-    """Return the path to the standalone OpenVPN OTP auth script."""
-    return Path(__file__).resolve().parents[1] / "openvpn_otp_auth.py"
+    """Return the path to the OpenVPN OTP auth implementation module."""
+    return Path(__file__).resolve().parents[1] / "src" / "openvpn_otp_auth" / "main.py"
 
 
 @pytest.fixture
 def load_module(
     monkeypatch: pytest.MonkeyPatch, script_path: Path
 ) -> Callable[[list[str]], ModuleType]:
-    """Return a loader for the script module with controlled command-line arguments."""
+    """Return a loader for the implementation module with controlled command-line arguments."""
 
     def _load_module(argv: list[str]) -> ModuleType:
-        """Load the script module and optionally parse controlled command-line arguments."""
-        module_name = "openvpn_otp_auth"
+        """Load the implementation module and optionally parse controlled CLI arguments."""
+        module_name = "openvpn_otp_auth.main"
         monkeypatch.setattr(sys, "argv", argv)
+        monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "src"))
+        sys.modules.pop("openvpn_otp_auth", None)
+        sys.modules.pop("openvpn_otp_auth._version", None)
         sys.modules.pop(module_name, None)
         spec = importlib.util.spec_from_file_location(module_name, script_path)
         if spec is None or spec.loader is None:

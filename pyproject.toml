@@ -40,10 +40,13 @@ Source = "https://github.com/Snuffy2/openvpn_otp_auth"
 openvpn-otp-auth = "openvpn_otp_auth:cli"
 
 [tool.setuptools]
-py-modules = ["openvpn_otp_auth"]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.setuptools.dynamic]
-version = { attr = "openvpn_otp_auth.VERSION" }
+version = { attr = "openvpn_otp_auth._version.VERSION" }
 
 [dependency-groups]
 lint = [
@@ -91,7 +94,7 @@ asyncio_mode = "auto"
 
 [tool.coverage.run]
 branch = true
-source = ["openvpn_otp_auth"]
+source = ["src/openvpn_otp_auth"]
 relative_files = true
 parallel = false
 

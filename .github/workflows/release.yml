@@ -22,7 +22,7 @@ jobs:
           ref: ${{ github.event.release.target_commitish }}
           fetch-depth: 0
 
-      - name: Update version in script
+      - name: Update version in package
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
@@ -31,7 +31,7 @@ jobs:
           from pathlib import Path
           import re
 
-          path = Path("openvpn_otp_auth.py")
+          path = Path("src/openvpn_otp_auth/_version.py")
           text = path.read_text()
           release_tag = os.environ["RELEASE_TAG"]
           updated = re.sub(
@@ -42,7 +42,7 @@ jobs:
               flags=re.MULTILINE,
           )
           if updated == text:
-              raise SystemExit("Could not find VERSION assignment in openvpn_otp_auth.py")
+              raise SystemExit("Could not find VERSION assignment in src/openvpn_otp_auth/_version.py")
           path.write_text(updated)
           PY
 
@@ -51,7 +51,7 @@ jobs:
         with:
           branch: ${{ github.event.release.target_commitish }}
           commit_message: "Updating to version ${{ github.event.release.tag_name }} [skip ci]"
-          file_pattern: openvpn_otp_auth.py
+          file_pattern: src/openvpn_otp_auth/_version.py
 
       - name: Move release tag to version commit
         env:
@@ -93,7 +93,7 @@ jobs:
           import re
           import sys
 
-          text = Path("openvpn_otp_auth.py").read_text()
+          text = Path("src/openvpn_otp_auth/_version.py").read_text()
           match = re.search(r'^VERSION = "([^"]+)"', text, re.MULTILINE)
           version = match.group(1) if match else None
           release_tag = os.environ["RELEASE_TAG"]

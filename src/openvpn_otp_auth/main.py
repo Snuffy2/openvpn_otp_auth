@@ -27,8 +27,33 @@ import argon2
 from getpass_asterisk.getpass_asterisk import getpass_asterisk  # type: ignore[import-untyped]
 import pyotp
 
-VERSION = "v1.4.0"
+from ._version import VERSION
+
 CONFIG_FILENAME = "openvpn_otp_auth.conf"
+
+
+def get_invoked_script_path() -> Path:
+    """Return the path used to invoke the script or console entry point."""
+    if not sys.argv:
+        return Path(__file__).resolve()
+    argv0 = Path(sys.argv[0])
+    if argv0.parent != Path():
+        return argv0.expanduser().absolute()
+    resolved_argv0 = shutil.which(sys.argv[0])
+    if resolved_argv0 is not None:
+        return Path(resolved_argv0)
+    return Path(__file__).resolve()
+
+
+def get_config_dir() -> Path:
+    """Return the directory that contains runtime config and default storage files."""
+    return get_invoked_script_path().parent
+
+
+def get_config_file_path() -> Path:
+    """Return the runtime config file path."""
+    return get_config_dir() / CONFIG_FILENAME
+
 
 # Main logger setup (stdout + file)
 logger = logging.getLogger(__name__)
@@ -46,7 +71,7 @@ logger.addHandler(stdout_handler)
 file_formatter = logging.Formatter(
     "%(asctime)s %(levelname)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
 )
-log_file_path = Path(__file__).resolve().parent / "openvpn_otp_auth.log"
+log_file_path = get_config_dir() / "openvpn_otp_auth.log"
 file_handler: logging.FileHandler | None = None
 try:
     file_handler = logging.FileHandler(log_file_path)
@@ -78,9 +103,9 @@ multi-factor authentication (MFA) [TOTP] for use with auth-user-pass-verify
 via-file option.\n
 Current config path: {get_config_file_path()}
 Installation:
-1. Install this package with pip, or place the {Path(__file__).name} script in
-   a location that ideally won't be removed by system updates.
-2. Run: 'openvpn-otp-auth --install' or 'python {Path(__file__).name} --install'
+1. Install this package with pip, or place the openvpn-otp-auth script in a
+   location that ideally won't be removed by system updates.
+2. Run: 'openvpn-otp-auth --install' or 'python -m openvpn_otp_auth --install'
    to build the config file
    {CONFIG_FILENAME} in the same folder as the invoked script.
 3. Review the Config file and make any necessary changes making sure the
@@ -147,29 +172,6 @@ Example server.ovpn lines:
         action="store_true",
     )
     return parser
-
-
-def get_invoked_script_path() -> Path:
-    """Return the path used to invoke the script or console entry point."""
-    if not sys.argv:
-        return Path(__file__).resolve()
-    argv0 = Path(sys.argv[0])
-    if argv0.parent != Path():
-        return argv0.expanduser().absolute()
-    resolved_argv0 = shutil.which(sys.argv[0])
-    if resolved_argv0 is not None:
-        return Path(resolved_argv0)
-    return Path(__file__).resolve()
-
-
-def get_config_dir() -> Path:
-    """Return the directory that contains runtime config and default storage files."""
-    return get_invoked_script_path().parent
-
-
-def get_config_file_path() -> Path:
-    """Return the runtime config file path."""
-    return get_config_dir() / CONFIG_FILENAME
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
