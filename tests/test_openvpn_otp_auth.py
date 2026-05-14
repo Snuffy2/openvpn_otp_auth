@@ -142,9 +142,11 @@ def test_readme_documents_pypi_install_and_console_command() -> None:
     """README installation guidance should match the packaged CLI."""
     readme = Path("README.md").read_text()
 
-    assert "pip install openvpn-otp-auth" in readme
+    assert "uv tool install openvpn-otp-auth" in readme
     assert "openvpn-otp-auth --install" in readme
-    assert "./.venv/bin/python -m openvpn_otp_auth --help" in readme
+    assert "uv sync --all-groups" in readme
+    assert "uv run python -m openvpn_otp_auth --help" in readme
+    assert "uv run openvpn-otp-auth --help" in readme
     assert "auth-user-pass-verify /etc/config/openvpn_otp_auth/openvpn-otp-auth via-file" in readme
 
 

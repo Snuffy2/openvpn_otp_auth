@@ -6,10 +6,11 @@
 
 ## Installation
 
-Install the PyPI package into an environment available to OpenVPN:
+Install the PyPI package as an isolated command-line tool with
+[uv](https://docs.astral.sh/uv/):
 
 ```bash
-pip install openvpn-otp-auth
+uv tool install openvpn-otp-auth
 ```
 
 Then create the default config file:
@@ -21,12 +22,13 @@ openvpn-otp-auth --install
 Review the generated `openvpn_otp_auth.conf` and make any necessary changes so
 the storage locations are correct and the issuer name is set.
 
-For local development, install the checkout in editable mode and run the package
-module or console script from that environment:
+For local development, sync the checkout with uv and run the package module or
+console script from that environment:
 
 ```bash
-./.venv/bin/python -m pip install -e .
-./.venv/bin/python -m openvpn_otp_auth --help
+uv sync --all-groups
+uv run python -m openvpn_otp_auth --help
+uv run openvpn-otp-auth --help
 ```
 
 For systems that need a stable executable under `/etc/config/openvpn_otp_auth`,
