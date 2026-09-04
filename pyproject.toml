@@ -52,6 +52,7 @@ version = { attr = "openvpn_otp_auth._version.VERSION" }
 lint = [
     "mypy",
     "prek",
+    "pytest",
     "ruff",
     "types-cffi",
     "types-PyMySQL",
@@ -60,6 +61,7 @@ lint = [
     "types-PyYAML",
     "types-requests",
     "types-setuptools",
+    "uv",
 ]
 pytest = [
     "pytest-asyncio",
@@ -74,6 +76,9 @@ dev = [
     "build",
     "twine",
 ]
+
+[tool.uv]
+required-version = ">=0.11.0"
 
 [tool.codespell]
 quiet-level = 3

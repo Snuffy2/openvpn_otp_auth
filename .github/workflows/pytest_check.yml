@@ -22,21 +22,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Python 3 (with caching)
-        uses: actions/setup-python@v7
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: '3.14'
-          cache: 'pip'
-          cache-dependency-path: |
-            pyproject.toml
-
-      - name: Install pytest Requirements
-        run: |
-          python -m pip install --upgrade pip
-          pip install --group pytest -e .
+          enable-cache: true
 
       - name: Run pytest with coverage (pytest-cov)
-        run: pytest
+        run: uv run --locked --group pytest pytest
+        env:
+          UV_LOCKED: "1"
 
       - name: 'Generate coverage Comment (and possibly Post to PR)'
         if: ${{ github.event_name != 'workflow_dispatch' }}
