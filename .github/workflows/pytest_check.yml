@@ -1,4 +1,4 @@
-name: pytest and coverage
+name: pytest check and post coverage
 
 on:
   push:
@@ -13,12 +13,14 @@ permissions:
 
 jobs:
   pull-request-tests:
-    name: pytest and coverage report
+    name: pytest check and post coverage
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Setup Python 3 (with caching)
         uses: actions/setup-python@v7
@@ -42,6 +44,7 @@ jobs:
         uses: py-cov-action/python-coverage-comment-action@v4.3
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTIVITY: ${{ github.event_name == 'push' && 'save_coverage_data_files' || 'process_pr' }}
           MINIMUM_GREEN: 90
           MINIMUM_ORANGE: 70
 

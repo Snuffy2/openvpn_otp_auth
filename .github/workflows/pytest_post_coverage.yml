@@ -1,19 +1,19 @@
-name: Post coverage Comment to PR
+name: pytest post coverage
 
 on:
   workflow_run:
-    workflows: ['pytest and coverage']
+    workflows: ['pytest check and post coverage']
     types:
       - completed
 
 permissions:
   pull-requests: write
-  contents: write
+  contents: read
   actions: read
 
 jobs:
   test:
-    name: Post coverage Comment to PR
+    name: pytest post coverage
     runs-on: ubuntu-latest
     if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
 
@@ -24,4 +24,5 @@ jobs:
         uses: py-cov-action/python-coverage-comment-action@v4.3
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTIVITY: post_comment
           GITHUB_PR_RUN_ID: ${{ github.event.workflow_run.id }}
