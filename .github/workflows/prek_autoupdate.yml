@@ -29,4 +29,6 @@ jobs:
         id: prek-autoupdate
         uses: Snuffy2/prek-autoupdate@v2
         with:
+          token: ${{ secrets.PREK_AUTOUPDATE_TOKEN }}
+          auto-merge: true
           update-day: "1"
