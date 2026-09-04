@@ -476,6 +476,24 @@ def test_release_workflow_binds_immutable_event_sha_at_all_state_boundaries() ->
         assert '--event-sha "$RELEASE_EVENT_SHA"' in block
 
 
+def test_release_workflow_authenticates_only_the_trusted_promotion_push() -> None:
+    """The write-scoped promotion can push without persisting checkout credentials."""
+    workflow = (Path(__file__).parents[1] / ".github/workflows/release.yml").read_text()
+    promotion = workflow[workflow.index("- name: Atomically advance default branch") :]
+    promotion = promotion[: promotion.find("\n      - name:", 1)]
+
+    assert "GH_TOKEN: ${{ github.token }}" in promotion
+    assert "gh auth setup-git --hostname github.com" in promotion
+    assert promotion.index("gh auth setup-git --hostname github.com") < promotion.index(
+        "release_refs.py promote"
+    )
+    checkout = workflow[
+        workflow.index("- name: Checkout trusted default-branch workflow revision") :
+    ]
+    checkout = checkout[: checkout.find("\n      - name:", 1)]
+    assert "persist-credentials: false" in checkout
+
+
 def test_candidate_rejects_declared_archive_bomb_before_member_read() -> None:
     """Declared decompressed limits fail before an archive member can be opened."""
     with pytest.raises(candidate.CandidateVerificationError, match="uncompressed content limit"):
