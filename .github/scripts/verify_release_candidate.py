@@ -732,7 +732,9 @@ def verify_sdist(
             )
     for name, value in trusted_test_payload.items():
         if contents[name] != value:
-            raise CandidateVerificationError("Source distribution test payload differs from trusted source.")
+            raise CandidateVerificationError(
+                "Source distribution test payload differs from trusted source."
+            )
     package_sources = sorted(f"src/{PROJECT_STEM}/{name}" for name in expected)
     egg_sources = [
         f"src/{PROJECT_STEM}.egg-info/{name}"

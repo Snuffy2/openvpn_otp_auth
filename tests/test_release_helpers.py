@@ -382,7 +382,9 @@ def test_candidate_rejects_wheel_record_digest_and_installer_tag_before_copy(
     assert not (tmp_path / "verified").exists()
 
 
-def test_candidate_rejects_wheel_record_digest_before_copy(tmp_path: Path, trusted_source: Path) -> None:
+def test_candidate_rejects_wheel_record_digest_before_copy(
+    tmp_path: Path, trusted_source: Path
+) -> None:
     """RECORD hashes are checked after all allowed wheel members are read."""
     handoff = tmp_path / "handoff"
     make_candidate_artifact(handoff, trusted_source, "v1.4.2")
@@ -395,26 +397,56 @@ def test_candidate_rejects_wheel_record_digest_before_copy(tmp_path: Path, trust
         for name, contents in members.items():
             archive.writestr(name, contents)
     with pytest.raises(candidate.CandidateVerificationError, match="RECORD digest"):
-        candidate.verify_candidate(handoff, trusted_source, trusted_source / "_version.py", tmp_path / "verified", "v1.4.2")
+        candidate.verify_candidate(
+            handoff, trusted_source, trusted_source / "_version.py", tmp_path / "verified", "v1.4.2"
+        )
     assert not (tmp_path / "verified").exists()
 
 
-@pytest.mark.parametrize("member_suffix", ["PKG-INFO", "src/openvpn_otp_auth.egg-info/PKG-INFO", "src/openvpn_otp_auth.egg-info/SOURCES.txt"])
-def test_candidate_rejects_forged_sdist_metadata_before_copy(tmp_path: Path, trusted_source: Path, member_suffix: str) -> None:
+@pytest.mark.parametrize(
+    "member_suffix",
+    [
+        "PKG-INFO",
+        "src/openvpn_otp_auth.egg-info/PKG-INFO",
+        "src/openvpn_otp_auth.egg-info/SOURCES.txt",
+    ],
+)
+def test_candidate_rejects_forged_sdist_metadata_before_copy(
+    tmp_path: Path, trusted_source: Path, member_suffix: str
+) -> None:
     """Both sdist metadata copies and its source manifest are trusted boundaries."""
     handoff = tmp_path / "handoff"
     make_candidate_artifact(handoff, trusted_source, "v1.4.2")
     sdist = handoff / "dist" / "openvpn_otp_auth-1.4.2.tar.gz"
     name = f"openvpn_otp_auth-1.4.2/{member_suffix}"
-    replacement = b"forged\n" if member_suffix.endswith("SOURCES.txt") else b"Name: openvpn-otp-auth\nVersion: 1.4.2\nRequires-Dist: forged\n\ntrusted readme\n"
+    replacement = (
+        b"forged\n"
+        if member_suffix.endswith("SOURCES.txt")
+        else b"Name: openvpn-otp-auth\nVersion: 1.4.2\nRequires-Dist: forged\n\ntrusted readme\n"
+    )
     rewrite_sdist_member(sdist, name, replacement)
     with pytest.raises(candidate.CandidateVerificationError):
-        candidate.verify_candidate(handoff, trusted_source, trusted_source / "_version.py", tmp_path / "verified", "v1.4.2")
+        candidate.verify_candidate(
+            handoff, trusted_source, trusted_source / "_version.py", tmp_path / "verified", "v1.4.2"
+        )
     assert not (tmp_path / "verified").exists()
 
 
-@pytest.mark.parametrize(("setting", "value", "match"), [("MAX_ARCHIVE_MEMBERS", 1, "excessive member count"), ("MAX_ARCHIVE_CONTENT_BYTES", 1, "decompressed content limit")])
-def test_candidate_enforces_streaming_sdist_limits_before_copy(tmp_path: Path, trusted_source: Path, monkeypatch: pytest.MonkeyPatch, setting: str, value: int, match: str) -> None:
+@pytest.mark.parametrize(
+    ("setting", "value", "match"),
+    [
+        ("MAX_ARCHIVE_MEMBERS", 1, "excessive member count"),
+        ("MAX_ARCHIVE_CONTENT_BYTES", 1, "decompressed content limit"),
+    ],
+)
+def test_candidate_enforces_streaming_sdist_limits_before_copy(
+    tmp_path: Path,
+    trusted_source: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    setting: str,
+    value: int,
+    match: str,
+) -> None:
     """Member-count and decompressed content bounds run on the public sdist path."""
     handoff = tmp_path / "handoff"
     make_candidate_artifact(handoff, trusted_source, "v1.4.2")
@@ -422,7 +454,9 @@ def test_candidate_enforces_streaming_sdist_limits_before_copy(tmp_path: Path, t
     if setting == "MAX_ARCHIVE_CONTENT_BYTES":
         monkeypatch.setattr(candidate, "verify_wheel", lambda *_args: None)
     with pytest.raises(candidate.CandidateVerificationError, match=match):
-        candidate.verify_candidate(handoff, trusted_source, trusted_source / "_version.py", tmp_path / "verified", "v1.4.2")
+        candidate.verify_candidate(
+            handoff, trusted_source, trusted_source / "_version.py", tmp_path / "verified", "v1.4.2"
+        )
     assert not (tmp_path / "verified").exists()
 
 
