@@ -22,6 +22,7 @@ id = "check-toml"
 
 [[repos.hooks]]
 id = "check-added-large-files"
+exclude = "^uv\\.lock$"
 
 [[repos]]
 repo = "https://github.com/rhysd/actionlint"
@@ -48,7 +49,7 @@ repo = "local"
 id = "mypy"
 name = "mypy"
 language = "system"
-entry = "uv run --locked --exact --group dev mypy --config-file=pyproject.toml ."
+entry = "uv run --locked --exact --group lint mypy --config-file=pyproject.toml ."
 types = ["python"]
 pass_filenames = false
 require_serial = true
