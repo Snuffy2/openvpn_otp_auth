@@ -30,8 +30,6 @@ jobs:
 
       - name: Run pytest with coverage (pytest-cov)
         run: uv run --locked --group pytest pytest
-        env:
-          UV_LOCKED: "1"
 
       - name: 'Generate coverage Comment (and possibly Post to PR)'
         if: ${{ github.event_name != 'workflow_dispatch' }}
