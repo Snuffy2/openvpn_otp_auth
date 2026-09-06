@@ -3,13 +3,9 @@
 # Verify the policy before any write-scoped job changes an auto-merge request.
 set -euo pipefail
 
-write_eligibility() {
-  printf 'eligibility=%s\n' "$1" >> "${GITHUB_OUTPUT}"
-}
-
 reject_update() {
   echo "$1"
-  write_eligibility rejected
+  printf 'eligibility=rejected\n' >> "${GITHUB_OUTPUT}"
   exit 1
 }
 
@@ -64,4 +60,4 @@ ${invalid_files}"
     ;;
 esac
 
-write_eligibility eligible
+printf 'eligibility=eligible\n' >> "${GITHUB_OUTPUT}"
