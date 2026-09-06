@@ -154,14 +154,14 @@ def test_verifier_rejects_events_without_dependabot_current_head_provenance(
         ("uv", "", 2),
     ],
 )
-def test_verifier_does_not_classify_operational_failures_as_rejections(
+def test_verifier_leaves_operational_failures_semantically_distinct(
     tmp_path: Path,
     verifier_path: Path,
     package_ecosystem: str,
     changed_files: str,
     gh_exit_code: int,
 ) -> None:
-    """Metadata and GitHub API failures leave auto-merge cleanup unauthorized."""
+    """Metadata and GitHub API failures leave their eligibility output unset."""
     result, output = run_verifier(
         tmp_path, verifier_path, package_ecosystem, changed_files, gh_exit_code
     )
@@ -177,13 +177,13 @@ def test_verifier_does_not_classify_operational_failures_as_rejections(
         ("synchronize", None),
     ],
 )
-def test_verifier_does_not_classify_missing_event_provenance_as_a_rejection(
+def test_verifier_leaves_missing_event_provenance_semantically_distinct(
     tmp_path: Path,
     verifier_path: Path,
     pull_request_action: str | None,
     event_sender_login: str | None,
 ) -> None:
-    """Unavailable event provenance leaves auto-merge cleanup unauthorized."""
+    """Unavailable event provenance leaves its eligibility output unset."""
     result, output = run_verifier(
         tmp_path,
         verifier_path,
@@ -206,3 +206,15 @@ def test_workflow_passes_pull_request_event_provenance_to_verifier() -> None:
 
     assert "PULL_REQUEST_ACTION: ${{ github.event.action }}" in workflow
     assert "EVENT_SENDER_LOGIN: ${{ github.event.sender.login }}" in workflow
+
+
+def test_workflow_fails_closed_when_verification_is_not_explicitly_eligible() -> None:
+    """Unset verifier output still runs guarded cleanup, while enablement requires eligibility."""
+    workflow_path = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/dependabot-auto-merge.yml"
+    )
+    workflow = workflow_path.read_text()
+
+    assert "if: needs.verify-dependency-update.outputs.eligibility == 'eligible'" in workflow
+    assert "always() && !cancelled() &&" in workflow
+    assert "needs.verify-dependency-update.outputs.eligibility != 'eligible'" in workflow
