@@ -1,0 +1,124 @@
+"""Behavioral tests for the Dependabot auto-merge eligibility verifier."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import subprocess
+
+import pytest
+
+
+@pytest.fixture
+def verifier_path() -> Path:
+    """Return the trusted Dependabot eligibility verifier."""
+    return (
+        Path(__file__).resolve().parents[1] / ".github" / "scripts" / "verify-dependabot-update.sh"
+    )
+
+
+def run_verifier(
+    tmp_path: Path,
+    verifier_path: Path,
+    package_ecosystem: str,
+    changed_files: str,
+    gh_exit_code: int = 0,
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    """Run the verifier with a fake GitHub CLI response.
+
+    Args:
+        tmp_path: Temporary directory for the fake executable and job output.
+        verifier_path: Path to the verifier script under test.
+        package_ecosystem: Dependabot ecosystem supplied by the metadata action.
+        changed_files: Newline-delimited filenames returned by the GitHub API.
+        gh_exit_code: Exit code returned by the fake GitHub CLI.
+
+    Returns:
+        The verifier process result and its GitHub Actions output content.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_gh = bin_dir / "gh"
+    fake_gh.write_text(
+        '#!/usr/bin/env bash\nprintf \'%s\\n\' "${FAKE_GH_FILES}"\nexit "${FAKE_GH_EXIT_CODE}"\n'
+    )
+    fake_gh.chmod(0o755)
+    github_output = tmp_path / "github-output"
+    environment = {
+        **os.environ,
+        "FAKE_GH_EXIT_CODE": str(gh_exit_code),
+        "FAKE_GH_FILES": changed_files,
+        "GITHUB_OUTPUT": str(github_output),
+        "PACKAGE_ECOSYSTEM": package_ecosystem,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "PR_NUMBER": "42",
+        "REPOSITORY": "Snuffy2/openvpn_otp_auth",
+    }
+    result = subprocess.run(
+        [str(verifier_path)],
+        capture_output=True,
+        check=False,
+        env=environment,
+        text=True,
+    )
+    output = github_output.read_text() if github_output.exists() else ""
+    return result, output
+
+
+@pytest.mark.parametrize(
+    ("package_ecosystem", "changed_files"),
+    [
+        ("uv", "uv.lock"),
+        ("github_actions", ".github/workflows/ci.yml\n.github/workflows/release.yaml"),
+    ],
+)
+def test_verifier_accepts_supported_dependency_updates(
+    tmp_path: Path, verifier_path: Path, package_ecosystem: str, changed_files: str
+) -> None:
+    """Supported updates explicitly report eligibility."""
+    result, output = run_verifier(tmp_path, verifier_path, package_ecosystem, changed_files)
+
+    assert result.returncode == 0
+    assert output == "eligibility=eligible\n"
+
+
+@pytest.mark.parametrize(
+    ("package_ecosystem", "changed_files"),
+    [
+        ("uv", "uv.lock\nREADME.md"),
+        ("github_actions", ".github/workflows/ci.yml\nREADME.md"),
+        ("pip", "requirements.txt"),
+        ("uv", ""),
+    ],
+)
+def test_verifier_marks_proven_policy_rejections(
+    tmp_path: Path, verifier_path: Path, package_ecosystem: str, changed_files: str
+) -> None:
+    """Policy violations explicitly authorize auto-merge cleanup."""
+    result, output = run_verifier(tmp_path, verifier_path, package_ecosystem, changed_files)
+
+    assert result.returncode == 1
+    assert output == "eligibility=rejected\n"
+
+
+@pytest.mark.parametrize(
+    ("package_ecosystem", "changed_files", "gh_exit_code"),
+    [
+        ("", "uv.lock", 0),
+        ("uv", "", 2),
+    ],
+)
+def test_verifier_does_not_classify_operational_failures_as_rejections(
+    tmp_path: Path,
+    verifier_path: Path,
+    package_ecosystem: str,
+    changed_files: str,
+    gh_exit_code: int,
+) -> None:
+    """Metadata and GitHub API failures leave auto-merge cleanup unauthorized."""
+    result, output = run_verifier(
+        tmp_path, verifier_path, package_ecosystem, changed_files, gh_exit_code
+    )
+
+    assert result.returncode != 0
+    assert output == ""
