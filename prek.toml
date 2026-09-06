@@ -22,7 +22,6 @@ id = "check-toml"
 
 [[repos.hooks]]
 id = "check-added-large-files"
-exclude = "^uv\\.lock$"
 
 [[repos]]
 repo = "https://github.com/rhysd/actionlint"
