@@ -49,7 +49,9 @@ repo = "local"
 id = "mypy"
 name = "mypy"
 language = "system"
-entry = "uv run --locked --exact --group lint mypy --config-file=pyproject.toml ."
+# Keep the hook itself unlocked so a local `prek run --all-files` creates or
+# refreshes a missing or stale `uv.lock`. CI sets `UV_LOCKED=1` externally.
+entry = "uv run --exact --group lint mypy --config-file=pyproject.toml ."
 types = ["python"]
 pass_filenames = false
 require_serial = true
