@@ -77,7 +77,7 @@ def run_verifier(
     ("package_ecosystem", "changed_files"),
     [
         ("uv", "uv.lock"),
-        ("github_actions", ".github/workflows/ci.yml\n.github/workflows/release.yaml"),
+        ("github-actions", ".github/workflows/ci.yml\n.github/workflows/release.yaml"),
     ],
 )
 @pytest.mark.parametrize("pull_request_action", ["opened", "synchronize"])
@@ -105,7 +105,7 @@ def test_verifier_accepts_supported_dependency_updates(
     ("package_ecosystem", "changed_files"),
     [
         ("uv", "uv.lock\nREADME.md"),
-        ("github_actions", ".github/workflows/ci.yml\nREADME.md"),
+        ("github-actions", ".github/workflows/ci.yml\nREADME.md"),
         ("pip", "requirements.txt"),
         ("uv", ""),
     ],

@@ -54,7 +54,7 @@ case "${PACKAGE_ECOSYSTEM}" in
     [[ "${changed_files}" == "uv.lock" ]] || reject_update "Refusing uv auto-merge; changed files were:
 ${changed_files}"
     ;;
-  github_actions)
+  github-actions)
     invalid_files="$(printf '%s\n' "${changed_files}" | grep -Ev '^\.github/workflows/[^/]+\.ya?ml$' || true)"
     [[ -z "${invalid_files}" ]] || reject_update "Refusing GitHub Actions auto-merge; unexpected files were:
 ${invalid_files}"
