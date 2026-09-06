@@ -49,6 +49,7 @@ def dependabot_commit(sha: str = SHA) -> dict[str, Any]:
     return {
         "author": {"login": "dependabot[bot]"},
         "commit": {"verification": {"verified": True}},
+        "committer": {"login": "web-flow"},
         "parents": [],
         "sha": sha,
     }
@@ -155,6 +156,32 @@ def test_authorizer_accepts_verified_uv_lockfile_update(
     assert result.returncode == 0
 
 
+@pytest.mark.parametrize("committer", [None, "Snuffy2"])
+def test_authorizer_rejects_untrusted_direct_dependabot_committer(
+    tmp_path: Path,
+    authorization_helper_path: Path,
+    pull_request_event: dict[str, Any],
+    committer: str | None,
+) -> None:
+    """Direct history requires GitHub's verified Dependabot committer identity."""
+    commit = dependabot_commit()
+    if committer is None:
+        del commit["committer"]
+    else:
+        commit["committer"] = {"login": committer}
+    result = run_authorizer(
+        tmp_path,
+        authorization_helper_path,
+        pull_request_event,
+        ["uv.lock"],
+        [commit],
+        [],
+        ["uv.lock"],
+    )
+
+    assert result.returncode != 0
+
+
 @pytest.mark.parametrize(
     ("head_ref", "changed_files", "trusted_paths"),
     [
@@ -241,6 +268,32 @@ def test_authorizer_rejects_non_web_flow_github_update_merge(
     """Only GitHub's Update branch committer can extend Dependabot history."""
     commits = update_chain()
     commits[1]["committer"] = {"login": "Snuffy2"}
+    result = run_authorizer(
+        tmp_path,
+        authorization_helper_path,
+        pull_request_event,
+        ["uv.lock"],
+        commits,
+        update_chain_proofs(),
+        ["uv.lock"],
+    )
+
+    assert result.returncode != 0
+
+
+@pytest.mark.parametrize("committer", [None, "Snuffy2"])
+def test_authorizer_rejects_untrusted_update_root_committer(
+    tmp_path: Path,
+    authorization_helper_path: Path,
+    pull_request_event: dict[str, Any],
+    committer: str | None,
+) -> None:
+    """An Update branch chain also requires a trusted Dependabot root commit."""
+    commits = update_chain()
+    if committer is None:
+        del commits[0]["committer"]
+    else:
+        commits[0]["committer"] = {"login": committer}
     result = run_authorizer(
         tmp_path,
         authorization_helper_path,
@@ -442,6 +495,9 @@ def test_dependabot_workflows_use_trusted_ancestry_authorization() -> None:
         if "if" not in job:
             assert_dependabot_author_guard(step["if"])
         run = step["run"]
+        assert step["env"]["BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
+        assert "github.event.pull_request.base.sha" not in run
+        assert 'base_sha="${BASE_SHA}"' in run
         assert "pulls/${PR_NUMBER}/files" in run
         assert "pulls/${PR_NUMBER}/commits" in run
         assert "compare/${second_parent}...${base_sha}" in run
