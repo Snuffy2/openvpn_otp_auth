@@ -38,8 +38,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PACKAGE_ECOSYSTEM: ${{ steps.dependabot-metadata.outputs.package-ecosystem }}
+          PULL_REQUEST_ACTION: ${{ github.event.action }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPOSITORY: ${{ github.repository }}
+          EVENT_SENDER_LOGIN: ${{ github.event.sender.login }}
         run: .github/scripts/verify-dependabot-update.sh
 
   enable-auto-merge:

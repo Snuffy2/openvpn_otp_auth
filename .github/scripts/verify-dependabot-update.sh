@@ -18,6 +18,25 @@ if [[ -z "${PACKAGE_ECOSYSTEM}" ]]; then
   exit 1
 fi
 
+if [[ -z "${PULL_REQUEST_ACTION:-}" || -z "${EVENT_SENDER_LOGIN:-}" ]]; then
+  echo "Pull request event provenance was not available" >&2
+  exit 1
+fi
+
+case "${PULL_REQUEST_ACTION}" in
+  opened|synchronize)
+    [[ "${EVENT_SENDER_LOGIN}" == "dependabot[bot]" ]] || reject_update \
+      "Refusing auto-merge; ${PULL_REQUEST_ACTION} was not produced by Dependabot"
+    ;;
+  reopened)
+    # A reopened event does not identify the actor that produced its current head.
+    reject_update "Refusing auto-merge; reopened events cannot prove current-head provenance"
+    ;;
+  *)
+    reject_update "Refusing auto-merge; unsupported pull request event: ${PULL_REQUEST_ACTION}"
+    ;;
+esac
+
 if changed_files="$(gh api --paginate \
   "repos/${REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" \
   --jq '.[].filename')"; then
