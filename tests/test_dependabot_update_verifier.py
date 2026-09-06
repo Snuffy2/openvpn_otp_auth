@@ -9,14 +9,6 @@ import subprocess
 import pytest
 
 
-@pytest.fixture
-def verifier_path() -> Path:
-    """Return the trusted Dependabot eligibility verifier."""
-    return (
-        Path(__file__).resolve().parents[1] / ".github" / "scripts" / "verify-dependabot-update.sh"
-    )
-
-
 def run_verifier(
     tmp_path: Path,
     verifier_path: Path,
