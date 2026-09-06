@@ -22,6 +22,7 @@ id = "check-toml"
 
 [[repos.hooks]]
 id = "check-added-large-files"
+exclude = "^uv\\.lock$"
 
 [[repos]]
 repo = "https://github.com/rhysd/actionlint"
@@ -40,6 +41,20 @@ rev = "v2.4.3"
 
 [[repos.hooks]]
 id = "codespell"
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "mypy"
+name = "mypy"
+language = "system"
+# Keep the hook itself unlocked so a local `prek run --all-files` creates or
+# refreshes a missing or stale `uv.lock`. CI sets `UV_LOCKED=1` externally.
+entry = "uv run --exact --group dev mypy --config-file=pyproject.toml ."
+types = ["python"]
+pass_filenames = false
+require_serial = true
 
 [[repos]]
 repo = "https://github.com/astral-sh/ruff-pre-commit"
