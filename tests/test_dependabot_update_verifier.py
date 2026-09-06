@@ -102,9 +102,40 @@ def test_authorizer_accepts_verified_uv_lockfile_update(
         ["uv.lock"],
         [dependabot_commit()],
         "dependabot[bot]",
+        ["uv.lock"],
     )
 
     assert result.returncode == 0
+
+
+@pytest.mark.parametrize(
+    ("head_ref", "changed_files", "trusted_paths"),
+    [
+        ("dependabot/uv/pytest-9.0.0", ["uv.lock"], ["package.json", "package-lock.json"]),
+        ("dependabot/npm_and_yarn/pytest-9.0.0", ["package-lock.json"], ["uv.lock"]),
+    ],
+)
+def test_authorizer_derives_the_supported_ecosystem_from_the_trusted_base(
+    tmp_path: Path,
+    authorization_helper_path: Path,
+    pull_request_event: dict[str, Any],
+    head_ref: str,
+    changed_files: list[str],
+    trusted_paths: list[str],
+) -> None:
+    """A Dependency branch cannot select an ecosystem absent from the trusted base."""
+    pull_request_event["pull_request"]["head"]["ref"] = head_ref
+    result = run_authorizer(
+        tmp_path,
+        authorization_helper_path,
+        pull_request_event,
+        changed_files,
+        [dependabot_commit()],
+        "dependabot[bot]",
+        trusted_paths,
+    )
+
+    assert result.returncode != 0
 
 
 @pytest.mark.parametrize(
@@ -161,9 +192,38 @@ def test_authorizer_accepts_verified_github_update_branch_history(
             },
         ],
         "Snuffy2",
+        ["uv.lock"],
     )
 
     assert result.returncode == 0
+
+
+def test_authorizer_rejects_invalid_github_update_branch_history(
+    tmp_path: Path, authorization_helper_path: Path, pull_request_event: dict[str, Any]
+) -> None:
+    """An Update branch chain must retain GitHub's verified merge provenance."""
+    initial_sha = "c" * 40
+    pull_request_event["action"] = "synchronize"
+    result = run_authorizer(
+        tmp_path,
+        authorization_helper_path,
+        pull_request_event,
+        ["uv.lock"],
+        [
+            dependabot_commit(initial_sha),
+            {
+                "author": {"login": "Snuffy2"},
+                "commit": {"verification": {"verified": True}},
+                "committer": {"login": "Snuffy2"},
+                "parents": [{"sha": initial_sha}, {"sha": BASE_SHA}],
+                "sha": SHA,
+            },
+        ],
+        "Snuffy2",
+        ["uv.lock"],
+    )
+
+    assert result.returncode != 0
 
 
 @pytest.mark.parametrize("changed_file", [".github/workflows/pytest_check.yml", "action.yml"])
