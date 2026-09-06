@@ -7,8 +7,8 @@ on:
       - completed
 
 jobs:
-  publish-coverage-data:
-    name: save default branch coverage data
+  publish-default-coverage:
+    name: pytest publish default coverage
     runs-on: ubuntu-latest
     if: >-
       github.event.workflow_run.event == 'push' &&
@@ -18,15 +18,25 @@ jobs:
     permissions:
       actions: read
       contents: write
+    concurrency:
+      group: pytest-default-coverage-${{ github.event.repository.default_branch }}
+      cancel-in-progress: true
 
     steps:
-      - name: Checkout exact source workflow revision
+      - name: Checkout tested default-branch commit
         uses: actions/checkout@v7
         with:
           persist-credentials: false
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.repository.default_branch }}
 
-      - name: Download source workflow coverage data
+      - name: Verify trusted default branch matches test run
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
+
+      - name: Download coverage data from test run
         uses: actions/download-artifact@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -34,7 +44,7 @@ jobs:
           path: .
           run-id: ${{ github.event.workflow_run.id }}
 
-      - name: Save coverage data
+      - name: Publish coverage report
         uses: py-cov-action/python-coverage-comment-action@v4.3
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

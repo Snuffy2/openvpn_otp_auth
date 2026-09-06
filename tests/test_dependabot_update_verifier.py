@@ -342,6 +342,11 @@ def step_with(job: dict[str, Any], capability: str) -> tuple[int, dict[str, Any]
     pytest.fail(f"workflow is missing {capability!r}")
 
 
+def uses_major_action(step: dict[str, Any], action: str) -> bool:
+    """Return whether a step invokes an action through a major release line."""
+    return str(step.get("uses", "")).startswith(f"{action}@v")
+
+
 def job_with(workflow: dict[str, Any], capability: str) -> dict[str, Any]:
     """Return the unique job that provides a workflow capability."""
     jobs = workflow["jobs"]
@@ -356,7 +361,7 @@ def artifact_step(job: dict[str, Any], artifact_name: str) -> dict[str, Any]:
     matches = [
         step
         for step in steps
-        if step.get("uses", "").startswith("actions/upload-artifact@")
+        if uses_major_action(step, "actions/upload-artifact")
         and step.get("with", {}).get("name") == artifact_name
     ]
     assert len(matches) == 1
@@ -368,7 +373,7 @@ def coverage_step(job: dict[str, Any], activity: str) -> dict[str, Any]:
     matches = [
         step
         for step in job["steps"]
-        if step.get("uses", "").startswith("py-cov-action/python-coverage-comment-action@")
+        if uses_major_action(step, "py-cov-action/python-coverage-comment-action")
         and step.get("with", {}).get("ACTIVITY") == activity
     ]
     assert len(matches) == 1
@@ -381,7 +386,7 @@ def coverage_job(workflow: dict[str, Any], activity: str) -> dict[str, Any]:
         job
         for job in workflow["jobs"].values()
         if any(
-            step.get("uses", "").startswith("py-cov-action/python-coverage-comment-action@")
+            uses_major_action(step, "py-cov-action/python-coverage-comment-action")
             and step.get("with", {}).get("ACTIVITY") == activity
             for step in job.get("steps", [])
         )
@@ -427,7 +432,9 @@ def test_dependabot_workflows_use_trusted_ancestry_authorization() -> None:
     }
     for workflow in workflows.values():
         job = job_with(workflow, "dependabot-auto-merge.mjs")
-        assert job["permissions"] == {"contents": "read", "pull-requests": "read"}
+        assert job["permissions"]["contents"] == "read"
+        assert job["permissions"]["pull-requests"] == "read"
+        assert all(permission in {"contents", "pull-requests"} for permission in job["permissions"])
         guard = job["if"] if "if" in job else job["steps"][0]["if"]
         assert_dependabot_author_guard(guard)
         assert_trusted_checkout_precedes_authorization(job)
@@ -463,51 +470,73 @@ def test_coverage_workflows_keep_pr_head_read_only_and_commenting_checkout_free(
     """PR-head tests remain read-only while workflow-run handles trusted writes."""
     pytest_check = load_workflow(Path(".github/workflows/pytest_check.yml"))
     pytest_post = load_workflow(Path(".github/workflows/pytest_post_coverage.yml"))
-    check_job = job_with(pytest_check, "uv run --locked --group pytest pytest")
+    check_job = coverage_job(pytest_check, "process_pr")
 
     assert "permissions" not in pytest_check
-    assert check_job["permissions"] == {"contents": "read", "pull-requests": "read"}
+    assert check_job["permissions"]["contents"] == "read"
+    assert check_job["permissions"]["pull-requests"] == "read"
     assert "write" not in check_job["permissions"].values()
     process_pr_step = coverage_step(check_job, "process_pr")
-    assert process_pr_step["uses"].startswith("py-cov-action/python-coverage-comment-action@")
+    assert uses_major_action(process_pr_step, "py-cov-action/python-coverage-comment-action")
     assert process_pr_step["with"]["MINIMUM_GREEN"] == 90
     assert process_pr_step["with"]["MINIMUM_ORANGE"] == 70
     comment_artifact = artifact_step(check_job, "python-coverage-comment-action")
-    assert comment_artifact["uses"].startswith("actions/upload-artifact@")
+    assert uses_major_action(comment_artifact, "actions/upload-artifact")
     coverage_artifact = artifact_step(check_job, "python-coverage-data")
-    assert coverage_artifact["uses"].startswith("actions/upload-artifact@")
+    assert uses_major_action(coverage_artifact, "actions/upload-artifact")
     assert coverage_artifact["with"]["path"] == ".coverage"
     assert coverage_artifact["with"]["include-hidden-files"] is True
     assert "github.event_name == 'push'" in coverage_artifact["if"]
     assert "github.ref_name == github.event.repository.default_branch" in coverage_artifact["if"]
 
     publisher = coverage_job(pytest_post, "save_coverage_data_files")
-    assert publisher["permissions"] == {"actions": "read", "contents": "write"}
+    publisher_permissions = publisher["permissions"]
+    assert publisher_permissions["actions"] == "read"
+    assert publisher_permissions["contents"] == "write"
+    assert all(permission in {"actions", "contents"} for permission in publisher_permissions)
+    assert "concurrency" not in pytest_post
+    assert publisher["concurrency"]["cancel-in-progress"] is True
+    assert "github.event.repository.default_branch" in publisher["concurrency"]["group"]
     publisher_save = coverage_step(publisher, "save_coverage_data_files")
     assert publisher_save["with"]["MINIMUM_GREEN"] == 90
     assert publisher_save["with"]["MINIMUM_ORANGE"] == 70
     assert "workflow_run.event == 'push'" in publisher["if"]
     assert "workflow_run.head_branch == github.event.repository.default_branch" in publisher["if"]
     assert "workflow_run.head_repository.full_name == github.repository" in publisher["if"]
-    _, publisher_checkout = step_with(publisher, "actions/checkout@")
-    assert publisher_checkout["with"] == {
-        "persist-credentials": False,
-        "ref": "${{ github.event.workflow_run.head_sha }}",
-    }
-    _, publisher_artifact = step_with(publisher, "python-coverage-data")
-    assert publisher_artifact["uses"].startswith("actions/download-artifact@")
-    assert publisher_artifact["with"]["run-id"] == "${{ github.event.workflow_run.id }}"
+    checkout_index, publisher_checkout = next(
+        (index, step)
+        for index, step in enumerate(publisher["steps"])
+        if uses_major_action(step, "actions/checkout")
+    )
+    checkout_with = publisher_checkout["with"]
+    assert checkout_with["persist-credentials"] is False
+    assert checkout_with["ref"] == "${{ github.event.repository.default_branch }}"
+    verification_index, verification = step_with(publisher, "git rev-parse HEAD")
+    assert verification["env"]["EXPECTED_SHA"] == "${{ github.event.workflow_run.head_sha }}"
+    artifact_index, publisher_artifact = step_with(publisher, "python-coverage-data")
+    assert uses_major_action(publisher_artifact, "actions/download-artifact")
+    artifact_with = publisher_artifact["with"]
+    assert artifact_with["github-token"] == "${{ secrets.GITHUB_TOKEN }}"
+    assert artifact_with["name"] == "python-coverage-data"
+    assert artifact_with["path"] == "."
+    assert artifact_with["run-id"] == "${{ github.event.workflow_run.id }}"
+    save_index, _ = step_with(publisher, "save_coverage_data_files")
+    assert checkout_index < verification_index < artifact_index < save_index
 
     commenter = coverage_job(pytest_post, "post_comment")
-    assert commenter["permissions"] == {
-        "actions": "read",
-        "contents": "read",
-        "pull-requests": "write",
-    }
-    assert "actions/checkout@" not in str(commenter["steps"])
+    assert commenter["permissions"]["actions"] == "read"
+    assert commenter["permissions"]["contents"] == "read"
+    assert commenter["permissions"]["pull-requests"] == "write"
+    assert all(
+        permission in {"actions", "contents", "pull-requests"}
+        for permission in commenter["permissions"]
+    )
+    assert "concurrency" not in commenter
+    assert not any(uses_major_action(step, "actions/checkout") for step in commenter["steps"])
     contents_writers = [
         job
         for job in pytest_post["jobs"].values()
         if job.get("permissions", {}).get("contents") == "write"
     ]
-    assert contents_writers == [publisher]
+    assert len(contents_writers) == 1
+    assert contents_writers[0] is publisher
