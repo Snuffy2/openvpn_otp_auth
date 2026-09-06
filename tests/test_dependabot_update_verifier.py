@@ -1,212 +1,190 @@
-"""Behavioral tests for the Dependabot auto-merge eligibility verifier."""
+"""Behavioral tests for the trusted Dependabot authorization helper."""
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
+from typing import Any
 
 import pytest
 
+SHA = "a" * 40
+BASE_SHA = "b" * 40
 
-def run_verifier(
-    tmp_path: Path,
-    verifier_path: Path,
-    package_ecosystem: str,
-    changed_files: str,
-    gh_exit_code: int = 0,
-    pull_request_action: str | None = "synchronize",
-    event_sender_login: str | None = "dependabot[bot]",
-) -> tuple[subprocess.CompletedProcess[str], str]:
-    """Run the verifier with a fake GitHub CLI response.
 
-    Args:
-        tmp_path: Temporary directory for the fake executable and job output.
-        verifier_path: Path to the verifier script under test.
-        package_ecosystem: Dependabot ecosystem supplied by the metadata action.
-        changed_files: Newline-delimited filenames returned by the GitHub API.
-        gh_exit_code: Exit code returned by the fake GitHub CLI.
-        pull_request_action: Pull request action that triggered the workflow.
-        event_sender_login: Actor that sent the pull request event.
+@pytest.fixture
+def authorization_helper_path() -> Path:
+    """Return the trusted Dependabot authorization helper."""
+    return Path(__file__).resolve().parents[1] / ".github/scripts/dependabot-auto-merge.mjs"
 
-    Returns:
-        The verifier process result and its GitHub Actions output content.
-    """
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    fake_gh = bin_dir / "gh"
-    fake_gh.write_text(
-        '#!/usr/bin/env bash\nprintf \'%s\\n\' "${FAKE_GH_FILES}"\nexit "${FAKE_GH_EXIT_CODE}"\n'
-    )
-    fake_gh.chmod(0o755)
-    github_output = tmp_path / "github-output"
-    environment = {
-        **os.environ,
-        "FAKE_GH_EXIT_CODE": str(gh_exit_code),
-        "FAKE_GH_FILES": changed_files,
-        "GITHUB_OUTPUT": str(github_output),
-        "PACKAGE_ECOSYSTEM": package_ecosystem,
-        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-        "PR_NUMBER": "42",
-        "REPOSITORY": "Snuffy2/openvpn_otp_auth",
+
+@pytest.fixture
+def pull_request_event() -> dict[str, Any]:
+    """Return a verified Dependabot pull-request event fixture."""
+    return {
+        "action": "opened",
+        "repository": {
+            "default_branch": "main",
+            "fork": False,
+            "full_name": "Snuffy2/openvpn_otp_auth",
+        },
+        "pull_request": {
+            "base": {"ref": "main", "sha": BASE_SHA},
+            "head": {
+                "ref": "dependabot/uv/pytest-9.0.0",
+                "repo": {"full_name": "Snuffy2/openvpn_otp_auth"},
+                "sha": SHA,
+            },
+            "user": {"login": "dependabot[bot]"},
+        },
     }
-    if pull_request_action is not None:
-        environment["PULL_REQUEST_ACTION"] = pull_request_action
-    if event_sender_login is not None:
-        environment["EVENT_SENDER_LOGIN"] = event_sender_login
-    result = subprocess.run(
-        [str(verifier_path)],
+
+
+def dependabot_commit(sha: str = SHA) -> dict[str, Any]:
+    """Create a verified Dependabot commit fixture."""
+    return {
+        "author": {"login": "dependabot[bot]"},
+        "commit": {"verification": {"verified": True}},
+        "parents": [],
+        "sha": sha,
+    }
+
+
+def run_authorizer(
+    tmp_path: Path,
+    authorization_helper_path: Path,
+    event: dict[str, Any],
+    changed_files: list[str],
+    commits: list[dict[str, Any]],
+    actor: str,
+    trusted_paths: list[str] | tuple[str, ...] = (),
+) -> subprocess.CompletedProcess[str]:
+    """Run the helper with a synthetic GitHub event and trusted-base files."""
+    trusted_base = tmp_path / "trusted-base"
+    trusted_base.mkdir()
+    for trusted_path in trusted_paths:
+        path = trusted_base / trusted_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("trusted fixture\n")
+
+    event_path = tmp_path / "event.json"
+    changed_files_path = tmp_path / "changed-files"
+    commits_path = tmp_path / "commits.json"
+    event_path.write_text(json.dumps(event))
+    changed_files_path.write_text("\n".join(changed_files))
+    commits_path.write_text(json.dumps([commits]))
+    return subprocess.run(
+        [
+            "node",
+            str(authorization_helper_path),
+            str(event_path),
+            str(changed_files_path),
+            str(commits_path),
+        ],
         capture_output=True,
         check=False,
-        env=environment,
+        cwd=trusted_base,
+        env={**os.environ, "GITHUB_ACTOR": actor},
         text=True,
     )
-    output = github_output.read_text() if github_output.exists() else ""
-    return result, output
 
 
-@pytest.mark.parametrize(
-    ("package_ecosystem", "changed_files"),
-    [
-        ("uv", "uv.lock"),
-        ("github-actions", ".github/workflows/ci.yml\n.github/workflows/release.yaml"),
-    ],
-)
-@pytest.mark.parametrize("pull_request_action", ["opened", "synchronize"])
-def test_verifier_accepts_supported_dependency_updates(
-    tmp_path: Path,
-    verifier_path: Path,
-    package_ecosystem: str,
-    changed_files: str,
-    pull_request_action: str,
+def test_authorizer_accepts_verified_uv_lockfile_update(
+    tmp_path: Path, authorization_helper_path: Path, pull_request_event: dict[str, Any]
 ) -> None:
-    """Supported updates explicitly report eligibility."""
-    result, output = run_verifier(
+    """A direct verified Dependabot lock update is accepted."""
+    result = run_authorizer(
         tmp_path,
-        verifier_path,
-        package_ecosystem,
-        changed_files,
-        pull_request_action=pull_request_action,
+        authorization_helper_path,
+        pull_request_event,
+        ["uv.lock"],
+        [dependabot_commit()],
+        "dependabot[bot]",
     )
 
     assert result.returncode == 0
-    assert output == "eligibility=eligible\n"
 
 
 @pytest.mark.parametrize(
-    ("package_ecosystem", "changed_files"),
+    ("changed_files", "trusted_paths"),
     [
-        ("uv", "uv.lock\nREADME.md"),
-        ("github-actions", ".github/workflows/ci.yml\nREADME.md"),
-        ("pip", "requirements.txt"),
-        ("uv", ""),
+        (["uv.lock", "pyproject.toml"], []),
+        ([".github/workflows/new-workflow.yml"], [".github/workflows/pytest_check.yml"]),
     ],
 )
-def test_verifier_marks_proven_policy_rejections(
-    tmp_path: Path, verifier_path: Path, package_ecosystem: str, changed_files: str
-) -> None:
-    """Policy violations explicitly authorize auto-merge cleanup."""
-    result, output = run_verifier(tmp_path, verifier_path, package_ecosystem, changed_files)
-
-    assert result.returncode == 1
-    assert output == "eligibility=rejected\n"
-
-
-@pytest.mark.parametrize(
-    ("pull_request_action", "event_sender_login"),
-    [
-        ("synchronize", "maintainer"),
-        ("reopened", "dependabot[bot]"),
-    ],
-)
-def test_verifier_rejects_events_without_dependabot_current_head_provenance(
+def test_authorizer_rejects_updates_outside_the_trusted_scope(
     tmp_path: Path,
-    verifier_path: Path,
-    pull_request_action: str,
-    event_sender_login: str,
+    authorization_helper_path: Path,
+    pull_request_event: dict[str, Any],
+    changed_files: list[str],
+    trusted_paths: list[str],
 ) -> None:
-    """Events that cannot prove the current head is Dependabot-produced enable cleanup."""
-    result, output = run_verifier(
+    """Untrusted changed files are rejected without relying on workflow text."""
+    if changed_files[0].startswith(".github"):
+        pull_request_event["pull_request"]["head"]["ref"] = (
+            "dependabot/github_actions/actions/checkout-7"
+        )
+    result = run_authorizer(
         tmp_path,
-        verifier_path,
-        "uv",
-        "uv.lock",
-        pull_request_action=pull_request_action,
-        event_sender_login=event_sender_login,
-    )
-
-    assert result.returncode == 1
-    assert output == "eligibility=rejected\n"
-
-
-@pytest.mark.parametrize(
-    ("package_ecosystem", "changed_files", "gh_exit_code"),
-    [
-        ("", "uv.lock", 0),
-        ("uv", "", 2),
-    ],
-)
-def test_verifier_leaves_operational_failures_semantically_distinct(
-    tmp_path: Path,
-    verifier_path: Path,
-    package_ecosystem: str,
-    changed_files: str,
-    gh_exit_code: int,
-) -> None:
-    """Metadata and GitHub API failures leave their eligibility output unset."""
-    result, output = run_verifier(
-        tmp_path, verifier_path, package_ecosystem, changed_files, gh_exit_code
+        authorization_helper_path,
+        pull_request_event,
+        changed_files,
+        [dependabot_commit()],
+        "dependabot[bot]",
+        trusted_paths,
     )
 
     assert result.returncode != 0
-    assert output == ""
 
 
-@pytest.mark.parametrize(
-    ("pull_request_action", "event_sender_login"),
-    [
-        (None, "dependabot[bot]"),
-        ("synchronize", None),
-    ],
-)
-def test_verifier_leaves_missing_event_provenance_semantically_distinct(
-    tmp_path: Path,
-    verifier_path: Path,
-    pull_request_action: str | None,
-    event_sender_login: str | None,
+def test_authorizer_accepts_verified_github_update_branch_history(
+    tmp_path: Path, authorization_helper_path: Path, pull_request_event: dict[str, Any]
 ) -> None:
-    """Unavailable event provenance leaves its eligibility output unset."""
-    result, output = run_verifier(
+    """A verified GitHub Update branch merge retains Dependabot authorization."""
+    initial_sha = "c" * 40
+    pull_request_event["action"] = "synchronize"
+    result = run_authorizer(
         tmp_path,
-        verifier_path,
-        "uv",
-        "uv.lock",
-        pull_request_action=pull_request_action,
-        event_sender_login=event_sender_login,
+        authorization_helper_path,
+        pull_request_event,
+        ["uv.lock"],
+        [
+            dependabot_commit(initial_sha),
+            {
+                "author": {"login": "Snuffy2"},
+                "commit": {"verification": {"verified": True}},
+                "committer": {"login": "web-flow"},
+                "parents": [{"sha": initial_sha}, {"sha": BASE_SHA}],
+                "sha": SHA,
+            },
+        ],
+        "Snuffy2",
     )
 
-    assert result.returncode != 0
-    assert output == ""
+    assert result.returncode == 0
 
 
-def test_workflow_passes_pull_request_event_provenance_to_verifier() -> None:
-    """The trusted verifier receives the event fields needed to validate the current head."""
-    workflow_path = (
-        Path(__file__).resolve().parents[1] / ".github/workflows/dependabot-auto-merge.yml"
+@pytest.mark.parametrize("changed_file", [".github/workflows/pytest_check.yml", "action.yml"])
+def test_authorizer_requires_existing_trusted_action_manifest(
+    tmp_path: Path,
+    authorization_helper_path: Path,
+    pull_request_event: dict[str, Any],
+    changed_file: str,
+) -> None:
+    """An Actions update is accepted only when its target exists in the trusted base."""
+    pull_request_event["pull_request"]["head"]["ref"] = (
+        "dependabot/github_actions/actions/checkout-7"
     )
-    workflow = workflow_path.read_text()
-
-    assert "PULL_REQUEST_ACTION: ${{ github.event.action }}" in workflow
-    assert "EVENT_SENDER_LOGIN: ${{ github.event.sender.login }}" in workflow
-
-
-def test_workflow_fails_closed_when_verification_is_not_explicitly_eligible() -> None:
-    """Unset verifier output still runs guarded cleanup, while enablement requires eligibility."""
-    workflow_path = (
-        Path(__file__).resolve().parents[1] / ".github/workflows/dependabot-auto-merge.yml"
+    result = run_authorizer(
+        tmp_path,
+        authorization_helper_path,
+        pull_request_event,
+        [changed_file],
+        [dependabot_commit()],
+        "dependabot[bot]",
+        [changed_file],
     )
-    workflow = workflow_path.read_text()
 
-    assert "if: needs.verify-dependency-update.outputs.eligibility == 'eligible'" in workflow
-    assert "always() && !cancelled() &&" in workflow
-    assert "needs.verify-dependency-update.outputs.eligibility != 'eligible'" in workflow
+    assert result.returncode == 0

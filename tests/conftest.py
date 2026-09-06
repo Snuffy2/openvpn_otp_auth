@@ -20,14 +20,6 @@ def script_path() -> Path:
 
 
 @pytest.fixture
-def verifier_path() -> Path:
-    """Return the trusted Dependabot eligibility verifier."""
-    return (
-        Path(__file__).resolve().parents[1] / ".github" / "scripts" / "verify-dependabot-update.sh"
-    )
-
-
-@pytest.fixture
 def load_module(
     monkeypatch: pytest.MonkeyPatch, script_path: Path
 ) -> Callable[[list[str]], ModuleType]:

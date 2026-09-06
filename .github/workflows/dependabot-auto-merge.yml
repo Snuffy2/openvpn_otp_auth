@@ -1,4 +1,4 @@
-name: Dependabot dependency auto-merge
+name: Dependabot auto-merge
 
 on:
   pull_request:
@@ -9,44 +9,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify-dependency-update:
+  authorize-dependency-update:
     if: >-
       github.event.repository.fork == false &&
       github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
+      (startsWith(github.event.pull_request.head.ref, 'dependabot/uv/') ||
+      startsWith(github.event.pull_request.head.ref, 'dependabot/github_actions/')) &&
       github.event.pull_request.base.ref == github.event.repository.default_branch
     runs-on: ubuntu-latest
-    outputs:
-      eligibility: ${{ steps.verify-dependency-update.outputs.eligibility }}
     permissions:
       contents: read
       pull-requests: read
     steps:
-      - name: Fetch Dependabot metadata
-        id: dependabot-metadata
-        uses: dependabot/fetch-metadata@v3
-
-      - name: Checkout trusted dependency verifier
+      - name: Checkout trusted authorization helper
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          fetch-depth: 1
           persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
 
-      - name: Verify supported dependency update
-        id: verify-dependency-update
+      - name: Authorize dependency update files
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PACKAGE_ECOSYSTEM: ${{ steps.dependabot-metadata.outputs.package-ecosystem }}
-          PULL_REQUEST_ACTION: ${{ github.event.action }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPOSITORY: ${{ github.repository }}
-          EVENT_SENDER_LOGIN: ${{ github.event.sender.login }}
-        run: .github/scripts/verify-dependabot-update.sh
+        run: |
+          set -euo pipefail
+          changed_files="${RUNNER_TEMP}/dependabot-changed-files"
+          commits="${RUNNER_TEMP}/dependabot-commits.json"
+          gh api --paginate \
+            "repos/${REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" \
+            --jq '.[].filename' > "${changed_files}"
+          gh api --paginate --slurp \
+            "repos/${REPOSITORY}/pulls/${PR_NUMBER}/commits?per_page=100" \
+            > "${commits}"
+          node .github/scripts/dependabot-auto-merge.mjs \
+            "${GITHUB_EVENT_PATH}" "${changed_files}" "${commits}"
 
   enable-auto-merge:
-    needs: verify-dependency-update
-    if: needs.verify-dependency-update.outputs.eligibility == 'eligible'
+    needs: authorize-dependency-update
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -61,13 +62,14 @@ jobs:
 
   disable-auto-merge:
     if: >-
-      always() && !cancelled() &&
-      needs.verify-dependency-update.outputs.eligibility != 'eligible' &&
+      failure() && !cancelled() &&
       github.event.repository.fork == false &&
       github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
+      (startsWith(github.event.pull_request.head.ref, 'dependabot/uv/') ||
+      startsWith(github.event.pull_request.head.ref, 'dependabot/github_actions/')) &&
       github.event.pull_request.base.ref == github.event.repository.default_branch
-    needs: verify-dependency-update
+    needs: authorize-dependency-update
     runs-on: ubuntu-latest
     permissions:
       contents: write
