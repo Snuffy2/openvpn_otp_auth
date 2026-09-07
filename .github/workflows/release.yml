@@ -193,7 +193,13 @@ jobs:
           cp verified-candidate/_version.py src/openvpn_otp_auth/_version.py
           git add src/openvpn_otp_auth/_version.py
           git diff --cached --check
-          git diff --cached --name-only | grep -Fx src/openvpn_otp_auth/_version.py
+          git diff --cached --name-only -z | {
+            IFS= read -r -d '' staged_path
+            [[ "$staged_path" == src/openvpn_otp_auth/_version.py ]]
+            if IFS= read -r -d ''; then
+              exit 1
+            fi
+          }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Release $RELEASE_TAG"
@@ -278,8 +284,6 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.14"
-          cache: pip
-          cache-dependency-path: pyproject.toml
       - name: Build the manually selected package
         run: |
           set -euo pipefail

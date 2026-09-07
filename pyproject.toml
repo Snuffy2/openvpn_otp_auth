@@ -74,6 +74,7 @@ dev = [
     { include-group = "lint" },
     { include-group = "pytest" },
     "build",
+    "setuptools>=77.0.0",
     "twine",
 ]
 

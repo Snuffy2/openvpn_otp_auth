@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 from io import BytesIO
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -268,6 +269,47 @@ def test_verified_candidate_copies_exact_trusted_payload(
     )
 
 
+def test_verified_candidate_accepts_artifacts_from_a_real_local_build(tmp_path: Path) -> None:
+    """The verifier accepts wheel and sdist bytes produced by the package build backend."""
+    project_root = Path(__file__).parents[1]
+    trusted_source = project_root / "src" / "openvpn_otp_auth"
+    trusted_version = trusted_source / "_version.py"
+    release_tag = "v1.4.2"
+    build_project = tmp_path / "build-project"
+    shutil.copytree(
+        project_root,
+        build_project,
+        ignore=shutil.ignore_patterns(
+            ".git", ".venv", ".coverage", "htmlcov", "__pycache__", "build", "dist", "*.egg-info"
+        ),
+    )
+    build_version = build_project / "src" / "openvpn_otp_auth" / "_version.py"
+    candidate.prepare_version_module(build_version, release_tag)
+
+    handoff = tmp_path / "handoff"
+    dist = handoff / "dist"
+    dist.mkdir(parents=True)
+    subprocess.run(
+        [sys.executable, "-m", "build", "--no-isolation", "--outdir", str(dist)],
+        cwd=build_project,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    shutil.copyfile(build_version, handoff / "_version.py")
+
+    assert {path.name for path in dist.iterdir()} == {
+        "openvpn_otp_auth-1.4.2-py3-none-any.whl",
+        "openvpn_otp_auth-1.4.2.tar.gz",
+    }
+    output = tmp_path / "verified"
+    candidate.verify_candidate(handoff, trusted_source, trusted_version, output, release_tag)
+
+    assert (output / "_version.py").read_bytes() == build_version.read_bytes()
+    assert (output / "dist" / "openvpn_otp_auth-1.4.2-py3-none-any.whl").is_file()
+    assert (output / "dist" / "openvpn_otp_auth-1.4.2.tar.gz").is_file()
+
+
 def test_candidate_rejects_altered_package_payload_before_copy(
     tmp_path: Path, trusted_source: Path
 ) -> None:
@@ -460,6 +502,72 @@ def test_candidate_enforces_streaming_sdist_limits_before_copy(
     assert not (tmp_path / "verified").exists()
 
 
+def workflow_step_block(workflow: str, name: str) -> str:
+    """Return one workflow step, stopping at the next step, job, or end of file.
+
+    Args:
+        workflow: Complete workflow YAML text.
+        name: Exact workflow step name.
+
+    Returns:
+        Text beginning at the named step and ending before the next boundary.
+    """
+    start = workflow.index(f"      - name: {name}")
+    block = workflow[start:]
+    lines = block.splitlines(keepends=True)
+    offset = len(lines[0])
+    for line in lines[1:]:
+        if line.startswith("      - name:") or (
+            line.startswith("  ") and not line.startswith("    ")
+        ):
+            return block[:offset]
+        offset += len(line)
+    return block
+
+
+@pytest.mark.parametrize(
+    ("workflow", "name", "expected", "forbidden"),
+    [
+        (
+            (
+                "jobs:\n"
+                "  first:\n"
+                "    steps:\n"
+                "      - name: final first-job step\n"
+                "        run: echo first\n"
+                "  second:\n"
+                "    steps:\n"
+                "      - name: later step\n"
+                "        run: echo later\n"
+            ),
+            "final first-job step",
+            "echo first",
+            "echo later",
+        ),
+        (
+            (
+                "jobs:\n"
+                "  only:\n"
+                "    steps:\n"
+                "      - name: final workflow step\n"
+                "        run: echo final"
+            ),
+            "final workflow step",
+            "echo final",
+            "not present",
+        ),
+    ],
+)
+def test_workflow_step_block_handles_job_and_file_boundaries(
+    workflow: str, name: str, expected: str, forbidden: str
+) -> None:
+    """Workflow step extraction excludes later jobs and preserves final bytes."""
+    block = workflow_step_block(workflow, name)
+
+    assert expected in block
+    assert forbidden not in block
+
+
 def test_release_workflow_binds_immutable_event_sha_at_all_state_boundaries() -> None:
     """Candidate checkout and every release-state validation use the event SHA."""
     workflow = (Path(__file__).parents[1] / ".github/workflows/release.yml").read_text()
@@ -470,8 +578,7 @@ def test_release_workflow_binds_immutable_event_sha_at_all_state_boundaries() ->
         "Validate immutable starting refs or an exact resume candidate",
     ]
     for name in state_steps:
-        block = workflow[workflow.index(f"- name: {name}") :]
-        block = block[: block.find("\n      - name:", 1)]
+        block = workflow_step_block(workflow, name)
         assert "RELEASE_EVENT_SHA: ${{ github.sha }}" in block
         assert '--event-sha "$RELEASE_EVENT_SHA"' in block
 
@@ -479,19 +586,36 @@ def test_release_workflow_binds_immutable_event_sha_at_all_state_boundaries() ->
 def test_release_workflow_authenticates_only_the_trusted_promotion_push() -> None:
     """The write-scoped promotion can push without persisting checkout credentials."""
     workflow = (Path(__file__).parents[1] / ".github/workflows/release.yml").read_text()
-    promotion = workflow[workflow.index("- name: Atomically advance default branch") :]
-    promotion = promotion[: promotion.find("\n      - name:", 1)]
+    promotion = workflow_step_block(workflow, "Atomically advance default branch")
 
     assert "GH_TOKEN: ${{ github.token }}" in promotion
     assert "gh auth setup-git --hostname github.com" in promotion
     assert promotion.index("gh auth setup-git --hostname github.com") < promotion.index(
         "release_refs.py promote"
     )
-    checkout = workflow[
-        workflow.index("- name: Checkout trusted default-branch workflow revision") :
-    ]
-    checkout = checkout[: checkout.find("\n      - name:", 1)]
+    checkout = workflow_step_block(workflow, "Checkout trusted default-branch workflow revision")
     assert "persist-credentials: false" in checkout
+
+
+def test_release_workflow_requires_exact_staged_version_file() -> None:
+    """Fresh promotion must stage exactly the release version module."""
+    workflow = (Path(__file__).parents[1] / ".github/workflows/release.yml").read_text()
+    creation = workflow_step_block(workflow, "Create or reuse the deterministic release commit")
+
+    assert "git diff --cached --name-only -z" in creation
+    assert '[[ "$staged_path" == src/openvpn_otp_auth/_version.py ]]' in creation
+    assert "if IFS= read -r -d ''; then" in creation
+
+
+def test_testpypi_publish_job_does_not_cache_with_oidc_permissions() -> None:
+    """The OIDC TestPyPI job must build without a reusable pip cache."""
+    workflow = (Path(__file__).parents[1] / ".github/workflows/release.yml").read_text()
+    testpypi_job = workflow[workflow.index("  publish_testpypi:") :]
+    setup_python = workflow_step_block(testpypi_job, "Set up Python")
+
+    assert "id-token: write" in testpypi_job
+    assert "cache:" not in setup_python
+    assert "cache-dependency-path:" not in setup_python
 
 
 def test_candidate_rejects_declared_archive_bomb_before_member_read() -> None:
