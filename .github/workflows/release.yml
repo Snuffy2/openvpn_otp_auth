@@ -12,6 +12,11 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  REQUIRED_CHECKS: |
+    prek-autofix-review.yml::review
+    pytest_check.yml::pytest check and post coverage
+
 jobs:
   candidate:
     name: Build and test immutable release candidate
@@ -63,7 +68,10 @@ jobs:
     if: github.event.repository.fork == false && github.event.release.prerelease == true
     runs-on: ubuntu-latest
     permissions:
+      actions: write
+      checks: read
       contents: read
+      statuses: write
     steps:
       - name: Require the default-branch release target
         env:
@@ -86,6 +94,9 @@ jobs:
           RELEASE_TARGET: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
+          workflow_sha="$(git rev-parse HEAD)"
+          trusted_verifier="$RUNNER_TEMP/verify_release_checks.py"
+          cp .github/scripts/verify_release_checks.py "$trusted_verifier"
           git fetch --force --no-tags origin \
             "refs/heads/$RELEASE_TARGET:refs/remotes/origin/$RELEASE_TARGET" \
             "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
@@ -99,6 +110,11 @@ jobs:
           source_sha="$(awk -F= '$1 == "source-sha" { print $2 }' <<< "$state")"
           [[ -n "$source_sha" ]]
           [[ "$source_sha" == "$RELEASE_EVENT_SHA" ]]
+          {
+            echo "source-sha=$source_sha"
+            echo "workflow-sha=$workflow_sha"
+            echo "verifier-path=$trusted_verifier"
+          } >> "$GITHUB_OUTPUT"
           git checkout --detach "$source_sha"
       - name: Download the untrusted candidate handoff
         uses: actions/download-artifact@v8
@@ -114,6 +130,22 @@ jobs:
             --candidate-directory downloaded-candidate \
             --output-directory verified-candidate \
             --release-tag "$RELEASE_TAG"
+      - name: Dispatch and verify immutable prerelease gates
+        env:
+          CANDIDATE_SHA: ${{ steps.state.outputs['source-sha'] }}
+          VERIFIER_PATH: ${{ steps.state.outputs['verifier-path'] }}
+          WORKFLOW_REF: ${{ github.event.repository.default_branch }}
+          WORKFLOW_SHA: ${{ steps.state.outputs['workflow-sha'] }}
+        run: |
+          set -euo pipefail
+          required_check_args=()
+          while IFS= read -r required_check; do
+            [[ -z "$required_check" ]] || required_check_args+=(--required-check "$required_check")
+          done <<< "$REQUIRED_CHECKS"
+          python "$VERIFIER_PATH" \
+            --repository "$GITHUB_REPOSITORY" --workflow-ref "$WORKFLOW_REF" \
+            --workflow-sha "$WORKFLOW_SHA" --sha "$CANDIDATE_SHA" \
+            "${required_check_args[@]}"
 
   promote_stable:
     name: Validate and atomically promote stable candidate
@@ -128,10 +160,6 @@ jobs:
       checks: read
       contents: write
       statuses: write
-    env:
-      REQUIRED_CHECKS: |
-        prek-autofix-review.yml::review
-        pytest_check.yml::pytest check and post coverage
     steps:
       - name: Require the default-branch release target
         env:
@@ -154,6 +182,9 @@ jobs:
           RELEASE_TARGET: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
+          workflow_sha="$(git rev-parse HEAD)"
+          trusted_verifier="$RUNNER_TEMP/verify_release_checks.py"
+          cp .github/scripts/verify_release_checks.py "$trusted_verifier"
           git fetch --force --no-tags origin \
             "refs/heads/$RELEASE_TARGET:refs/remotes/origin/$RELEASE_TARGET" \
             "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
@@ -166,7 +197,8 @@ jobs:
           printf '%s\n' "$state" >> "$GITHUB_OUTPUT"
           source_sha="$(awk -F= '$1 == "source-sha" { print $2 }' <<< "$state")"
           [[ -n "$source_sha" ]]
-          echo "workflow-sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "workflow-sha=$workflow_sha" >> "$GITHUB_OUTPUT"
+          echo "verifier-path=$trusted_verifier" >> "$GITHUB_OUTPUT"
           mode="$(awk -F= '$1 == "mode" { print $2 }' <<< "$state")"
           if [[ "$mode" == fresh ]]; then
             [[ "$source_sha" == "$RELEASE_EVENT_SHA" ]]
@@ -228,6 +260,7 @@ jobs:
       - name: Dispatch and verify immutable release gates
         env:
           CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
+          VERIFIER_PATH: ${{ steps.state.outputs['verifier-path'] }}
           WORKFLOW_REF: ${{ github.event.repository.default_branch }}
           WORKFLOW_SHA: ${{ steps.state.outputs['workflow-sha'] }}
         run: |
@@ -236,7 +269,7 @@ jobs:
           while IFS= read -r required_check; do
             [[ -z "$required_check" ]] || required_check_args+=(--required-check "$required_check")
           done <<< "$REQUIRED_CHECKS"
-          python .github/scripts/verify_release_checks.py \
+          python "$VERIFIER_PATH" \
             --repository "$GITHUB_REPOSITORY" --workflow-ref "$WORKFLOW_REF" \
             --workflow-sha "$WORKFLOW_SHA" --sha "$CANDIDATE_SHA" \
             "${required_check_args[@]}"

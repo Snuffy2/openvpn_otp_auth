@@ -28,11 +28,11 @@ def metadata(version: str = VERSION, requires_python: str = REQUIRES_PYTHON) -> 
     """Create minimal valid distribution metadata.
 
     Args:
-        version: PEP 440 version written into the metadata.
-        requires_python: Requires-Python value written into the metadata.
+        version (str): PEP 440 version written into the metadata.
+        requires_python (str): Requires-Python value written into the metadata.
 
     Returns:
-        Core metadata bytes for the generic sample package.
+        bytes: Core metadata bytes for the generic sample package.
     """
     return (
         f"Metadata-Version: 2.4\nName: {NAME}\nVersion: {version}\n"
@@ -44,11 +44,11 @@ def record_entry(path: str, contents: bytes) -> list[str]:
     """Build one SHA-256 wheel RECORD row.
 
     Args:
-        path: Wheel-relative member path.
-        contents: Member bytes to hash.
+        path (str): Wheel-relative member path.
+        contents (bytes): Member bytes to hash.
 
     Returns:
-        A valid three-column RECORD row.
+        list[str]: A valid three-column RECORD row.
     """
     digest = base64.urlsafe_b64encode(hashlib.sha256(contents).digest()).rstrip(b"=").decode()
     return [path, f"sha256={digest}", str(len(contents))]
@@ -68,14 +68,14 @@ def write_distributions(
     """Write a minimal wheel and source distribution pair.
 
     Args:
-        directory: Destination directory for fixture distributions.
-        version: Expected normalized release version.
-        metadata_version: Optional replacement metadata version.
-        metadata_requires_python: Optional replacement Requires-Python metadata value.
-        wheel_metadata_version: Optional wheel-only replacement metadata version.
-        sdist_metadata_version: Optional sdist-only replacement metadata version.
-        wheel_requires_python: Optional wheel-only replacement Requires-Python value.
-        sdist_requires_python: Optional sdist-only replacement Requires-Python value.
+        directory (Path): Destination directory for fixture distributions.
+        version (str): Expected normalized release version.
+        metadata_version (str | None): Optional replacement metadata version.
+        metadata_requires_python (str | None): Optional replacement Requires-Python metadata value.
+        wheel_metadata_version (str | None): Optional wheel-only replacement metadata version.
+        sdist_metadata_version (str | None): Optional sdist-only replacement metadata version.
+        wheel_requires_python (str | None): Optional wheel-only replacement Requires-Python value.
+        sdist_requires_python (str | None): Optional sdist-only replacement Requires-Python value.
     """
     directory.mkdir()
     default_version = version if metadata_version is None else metadata_version
@@ -123,8 +123,8 @@ def verify_pair(directory: Path, version: str = VERSION) -> None:
     """Run the core verifier for the generic fixture package.
 
     Args:
-        directory: Fixture distribution directory.
-        version: Expected normalized release version.
+        directory (Path): Fixture distribution directory.
+        version (str): Expected normalized release version.
     """
     verify.verify_python_distributions(
         directory,
@@ -139,8 +139,8 @@ def rebuild_wheel(path: Path, members: dict[str, bytes]) -> None:
     """Replace a fixture wheel with the requested members.
 
     Args:
-        path: Wheel archive to replace.
-        members: Wheel-member contents keyed by member path.
+        path (Path): Wheel archive to replace.
+        members (dict[str, bytes]): Wheel-member contents keyed by member path.
     """
     rebuilt = path.with_name("rebuilt.whl")
     with zipfile.ZipFile(rebuilt, "w") as archive:
@@ -153,7 +153,12 @@ def rebuild_wheel(path: Path, members: dict[str, bytes]) -> None:
 def test_verify_python_distributions_accepts_fixed_component_versions(
     tmp_path: Path, version: str
 ) -> None:
-    """Accept a matching pure wheel and sdist for each shared stable version shape."""
+    """Accept a matching pure wheel and sdist for each shared stable version shape.
+
+    Args:
+        tmp_path (Path): Temporary fixture root.
+        version (str): Stable PEP 440 version to package.
+    """
     dist_dir = tmp_path / "dist"
     write_distributions(dist_dir, version=version)
 
@@ -161,7 +166,11 @@ def test_verify_python_distributions_accepts_fixed_component_versions(
 
 
 def test_verify_python_distributions_rejects_extra_or_missing_paths(tmp_path: Path) -> None:
-    """Reject a distribution directory that is not the exact expected pair."""
+    """Reject a distribution directory that is not the exact expected pair.
+
+    Args:
+        tmp_path (Path): Temporary fixture root.
+    """
     dist_dir = tmp_path / "dist"
     write_distributions(dist_dir)
     (dist_dir / "unexpected.txt").write_text("unexpected", encoding="utf-8")
@@ -171,7 +180,11 @@ def test_verify_python_distributions_rejects_extra_or_missing_paths(tmp_path: Pa
 
 
 def test_verify_python_distributions_rejects_non_regular_distribution_path(tmp_path: Path) -> None:
-    """Reject a directory in place of a required wheel file."""
+    """Reject a directory in place of a required wheel file.
+
+    Args:
+        tmp_path (Path): Temporary fixture root.
+    """
     dist_dir = tmp_path / "dist"
     write_distributions(dist_dir)
     wheel = dist_dir / f"{STEM}-{VERSION}-py3-none-any.whl"
@@ -186,7 +199,12 @@ def test_verify_python_distributions_rejects_non_regular_distribution_path(tmp_p
 def test_verify_python_distributions_rejects_mismatched_metadata(
     tmp_path: Path, target: str
 ) -> None:
-    """Reject a version mismatch from either distribution form."""
+    """Reject a version mismatch from either distribution form.
+
+    Args:
+        tmp_path (Path): Temporary fixture root.
+        target (str): Distribution form whose metadata is altered.
+    """
     dist_dir = tmp_path / "dist"
     write_distributions(dist_dir, **{f"{target}_metadata_version": "9.9.9"})
 
@@ -198,7 +216,12 @@ def test_verify_python_distributions_rejects_mismatched_metadata(
 def test_verify_python_distributions_rejects_mismatched_requires_python(
     tmp_path: Path, target: str
 ) -> None:
-    """Reject a Python-floor mismatch from either distribution form."""
+    """Reject a Python-floor mismatch from either distribution form.
+
+    Args:
+        tmp_path (Path): Temporary fixture root.
+        target (str): Distribution form whose Python requirement is altered.
+    """
     dist_dir = tmp_path / "dist"
     write_distributions(dist_dir, **{f"{target}_requires_python": ">=3.13"})
 
@@ -209,7 +232,11 @@ def test_verify_python_distributions_rejects_mismatched_requires_python(
 def test_verify_python_distributions_rejects_duplicate_or_unsafe_wheel_members(
     tmp_path: Path,
 ) -> None:
-    """Reject duplicate wheel members and traversal paths before RECORD verification."""
+    """Reject duplicate wheel members and traversal paths before RECORD verification.
+
+    Args:
+        tmp_path (Path): Temporary fixture root.
+    """
     dist_dir = tmp_path / "dist"
     write_distributions(dist_dir)
     wheel = dist_dir / f"{STEM}-{VERSION}-py3-none-any.whl"
@@ -229,7 +256,11 @@ def test_verify_python_distributions_rejects_duplicate_or_unsafe_wheel_members(
 
 
 def test_verify_python_distributions_rejects_duplicate_sdist_members(tmp_path: Path) -> None:
-    """Reject duplicate sdist member paths while its wheel remains valid."""
+    """Reject duplicate sdist member paths while its wheel remains valid.
+
+    Args:
+        tmp_path (Path): Temporary fixture root.
+    """
     dist_dir = tmp_path / "dist"
     write_distributions(dist_dir)
     sdist = dist_dir / f"{STEM}-{VERSION}.tar.gz"
@@ -248,7 +279,11 @@ def test_verify_python_distributions_rejects_duplicate_sdist_members(tmp_path: P
 def test_verify_python_distributions_rejects_missing_or_incompatible_wheel_metadata(
     tmp_path: Path,
 ) -> None:
-    """Reject missing WHEEL and a wheel with unsupported compatibility metadata."""
+    """Reject missing WHEEL and a wheel with unsupported compatibility metadata.
+
+    Args:
+        tmp_path (Path): Temporary fixture root.
+    """
     dist_dir = tmp_path / "missing"
     write_distributions(dist_dir)
     wheel = dist_dir / f"{STEM}-{VERSION}-py3-none-any.whl"
@@ -277,7 +312,11 @@ def test_verify_python_distributions_rejects_missing_or_incompatible_wheel_metad
 
 
 def test_verify_python_distributions_rejects_missing_sdist_metadata(tmp_path: Path) -> None:
-    """Reject an sdist without PKG-INFO while its wheel remains valid."""
+    """Reject an sdist without PKG-INFO while its wheel remains valid.
+
+    Args:
+        tmp_path (Path): Temporary fixture root.
+    """
     dist_dir = tmp_path / "dist"
     write_distributions(dist_dir)
     sdist = dist_dir / f"{STEM}-{VERSION}.tar.gz"
@@ -290,7 +329,11 @@ def test_verify_python_distributions_rejects_missing_sdist_metadata(tmp_path: Pa
 
 
 def test_verify_python_distributions_bounds_all_sdist_headers(tmp_path: Path) -> None:
-    """Reject an sdist with too many directory headers before metadata extraction."""
+    """Reject an sdist with too many directory headers before metadata extraction.
+
+    Args:
+        tmp_path (Path): Temporary fixture root.
+    """
     dist_dir = tmp_path / "dist"
     write_distributions(dist_dir)
     sdist = dist_dir / f"{STEM}-{VERSION}.tar.gz"
@@ -311,7 +354,11 @@ def test_verify_python_distributions_bounds_all_sdist_headers(tmp_path: Path) ->
 
 
 def test_verify_python_distributions_rejects_unsafe_sdist_member_type(tmp_path: Path) -> None:
-    """Reject a symbolic-link sdist member through the public verifier."""
+    """Reject a symbolic-link sdist member through the public verifier.
+
+    Args:
+        tmp_path (Path): Temporary fixture root.
+    """
     dist_dir = tmp_path / "type"
     write_distributions(dist_dir)
     sdist = dist_dir / f"{STEM}-{VERSION}.tar.gz"
@@ -333,7 +380,12 @@ def test_verify_python_distributions_rejects_unsafe_sdist_member_type(tmp_path: 
 def test_verify_python_distributions_rejects_wheel_and_sdist_size_limits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Exercise each archive verifier when its declared member sizes exceed the bound."""
+    """Exercise each archive verifier when its declared member sizes exceed the bound.
+
+    Args:
+        tmp_path (Path): Temporary fixture root.
+        monkeypatch (pytest.MonkeyPatch): Fixture for reducing the member-size limit.
+    """
     dist_dir = tmp_path / "wheel"
     write_distributions(dist_dir)
     monkeypatch.setattr(verify, "MAX_ARCHIVE_MEMBER_BYTES", 0)
@@ -361,7 +413,11 @@ def test_verify_python_distributions_rejects_wheel_and_sdist_size_limits(
 
 
 def test_verify_python_distributions_rejects_bad_wheel_record(tmp_path: Path) -> None:
-    """Reject a wheel whose RECORD digest cannot verify the archived payload."""
+    """Reject a wheel whose RECORD digest cannot verify the archived payload.
+
+    Args:
+        tmp_path (Path): Temporary fixture root.
+    """
     dist_dir = tmp_path / "dist"
     write_distributions(dist_dir)
     wheel = dist_dir / f"{STEM}-{VERSION}-py3-none-any.whl"
@@ -379,7 +435,11 @@ def test_verify_python_distributions_rejects_bad_wheel_record(tmp_path: Path) ->
 
 
 def test_verify_python_distributions_rejects_unsafe_sdist_member(tmp_path: Path) -> None:
-    """Reject an sdist member that escapes the declared archive root."""
+    """Reject an sdist member that escapes the declared archive root.
+
+    Args:
+        tmp_path (Path): Temporary fixture root.
+    """
     dist_dir = tmp_path / "dist"
     write_distributions(dist_dir)
     sdist = dist_dir / f"{STEM}-{VERSION}.tar.gz"
@@ -408,7 +468,13 @@ def test_verify_python_distributions_rejects_unsafe_sdist_member(tmp_path: Path)
 def test_verify_python_distributions_rejects_corrupt_archive(
     tmp_path: Path, path: str, message: str
 ) -> None:
-    """Reject each distribution archive when it cannot be decoded."""
+    """Reject each distribution archive when it cannot be decoded.
+
+    Args:
+        tmp_path (Path): Temporary fixture root.
+        path (str): Distribution filename replaced with invalid bytes.
+        message (str): Expected verifier error text.
+    """
     dist_dir = tmp_path / "dist"
     write_distributions(dist_dir)
     (dist_dir / path).write_bytes(b"not-an-archive")

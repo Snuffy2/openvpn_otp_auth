@@ -6,6 +6,7 @@ import base64
 import hashlib
 import importlib.util
 from io import BytesIO
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -335,10 +336,24 @@ def test_release_tag_policy_accepts_two_to_four_numeric_components(
 
 
 @pytest.mark.parametrize(
-    "release_tag", ["v1", "v01.2", "v1.2.3.4.5", "1.2", "v1.2.post1", "v1.2rc"]
+    "release_tag",
+    [
+        "v1",
+        "v01.2",
+        "v1.2.3.4.5",
+        "1.2",
+        "v1.2.post1",
+        "v1.2rc",
+        "v1.2rc٢",
+        "v1.2b١",
+    ],
 )
 def test_release_tag_policy_rejects_unsupported_versions(release_tag: str) -> None:
-    """Tag validation rejects unsupported component counts and PEP 440 forms."""
+    """Tag validation rejects unsupported components, forms, and Unicode serials.
+
+    Args:
+        release_tag (str): Invalid tag supplied to both release boundaries.
+    """
     with pytest.raises(release_refs.ReleaseStateError, match="Unsupported release tag"):
         release_refs.require_release_tag(release_tag)
     with pytest.raises(candidate.CandidateVerificationError, match="Unsupported release tag"):
@@ -672,20 +687,78 @@ def test_release_workflow_requires_exact_staged_version_file() -> None:
     assert "if IFS= read -r -d ''; then" in creation
 
 
-def test_release_workflow_dispatches_both_protected_checks_without_duplicate_ci() -> None:
-    """Stable promotion dispatches the existing review and pytest checks for B."""
+def test_release_workflow_reuses_one_gate_manifest_for_stable_and_prerelease() -> None:
+    """Stable and prerelease paths dispatch the same existing checks without duplicate CI."""
     workflow = (Path(__file__).parents[1] / ".github/workflows/release.yml").read_text()
     candidate = workflow_step_block(workflow, "Test and build the candidate package")
-    dispatch = workflow_step_block(workflow, "Dispatch and verify immutable release gates")
+    stable = workflow_step_block(workflow, "Dispatch and verify immutable release gates")
+    prerelease = workflow_step_block(workflow, "Dispatch and verify immutable prerelease gates")
 
-    assert "prek-autofix-review.yml::review" in workflow
-    assert "pytest_check.yml::pytest check and post coverage" in workflow
-    assert '--workflow-ref "$WORKFLOW_REF"' in dispatch
-    assert '--workflow-sha "$WORKFLOW_SHA"' in dispatch
-    assert '--sha "$CANDIDATE_SHA"' in dispatch
+    assert workflow.count("prek-autofix-review.yml::review") == 1
+    assert workflow.count("pytest_check.yml::pytest check and post coverage") == 1
+    for dispatch in (stable, prerelease):
+        assert 'done <<< "$REQUIRED_CHECKS"' in dispatch
+        assert '--workflow-ref "$WORKFLOW_REF"' in dispatch
+        assert '--workflow-sha "$WORKFLOW_SHA"' in dispatch
+        assert '--sha "$CANDIDATE_SHA"' in dispatch
     assert "prek run --all-files" not in candidate
     assert "mypy ." not in candidate
     assert "pytest" not in candidate
+
+
+def test_prerelease_validation_dispatches_existing_exact_sha_gates() -> None:
+    """Prerelease validation uses trusted definitions without promotion.
+
+    The event commit may be an ancestor of a newer default branch and lack the
+    helper, so the job snapshots the helper and workflow SHA before detaching
+    to the immutable candidate commit.
+    """
+    workflow = (Path(__file__).parents[1] / ".github/workflows/release.yml").read_text()
+    prerelease = workflow[
+        workflow.index("  validate_prerelease:") : workflow.index("  promote_stable:")
+    ]
+    dispatch = workflow_step_block(prerelease, "Dispatch and verify immutable prerelease gates")
+
+    assert "actions: write" in prerelease
+    assert "checks: read" in prerelease
+    assert "statuses: write" in prerelease
+    state = workflow_step_block(
+        prerelease, "Prove the prerelease tag is already a matching default-branch commit"
+    )
+    assert state.index('workflow_sha="$(git rev-parse HEAD)"') < state.index("git fetch")
+    assert state.index(
+        'cp .github/scripts/verify_release_checks.py "$trusted_verifier"'
+    ) < state.index('git checkout --detach "$source_sha"')
+    assert 'echo "source-sha=$source_sha"' in prerelease
+    assert 'echo "workflow-sha=$workflow_sha"' in prerelease
+    assert 'echo "verifier-path=$trusted_verifier"' in prerelease
+    assert "VERIFIER_PATH: ${{ steps.state.outputs['verifier-path'] }}" in dispatch
+    assert "WORKFLOW_REF: ${{ github.event.repository.default_branch }}" in dispatch
+    assert '--workflow-ref "$WORKFLOW_REF"' in dispatch
+    assert '--workflow-sha "$WORKFLOW_SHA"' in dispatch
+    assert '--sha "$CANDIDATE_SHA"' in dispatch
+    assert 'python "$VERIFIER_PATH"' in dispatch
+    assert "release_refs.py promote" not in prerelease
+    assert "Publish verified stable distribution" not in prerelease
+
+
+def test_stable_resume_dispatch_keeps_the_trusted_workflow_revision() -> None:
+    """A resumed candidate can be older than main without changing its controller proof."""
+    workflow = (Path(__file__).parents[1] / ".github/workflows/release.yml").read_text()
+    stable = workflow[workflow.index("  promote_stable:") :]
+    state = workflow_step_block(
+        stable, "Validate immutable starting refs or an exact resume candidate"
+    )
+    dispatch = workflow_step_block(stable, "Dispatch and verify immutable release gates")
+
+    assert state.index('workflow_sha="$(git rev-parse HEAD)"') < state.index("git fetch")
+    assert state.index(
+        'cp .github/scripts/verify_release_checks.py "$trusted_verifier"'
+    ) < state.index('git checkout --detach "$source_sha"')
+    assert 'echo "workflow-sha=$workflow_sha" >> "$GITHUB_OUTPUT"' in state
+    assert 'echo "workflow-sha=$source_sha"' not in state
+    assert "VERIFIER_PATH:" in dispatch
+    assert 'python "$VERIFIER_PATH"' in dispatch
 
 
 def test_existing_release_checks_accept_an_exact_dispatched_candidate_sha() -> None:
@@ -704,6 +777,68 @@ def test_existing_release_checks_accept_an_exact_dispatched_candidate_sha() -> N
     assert "github.event_name == 'pull_request'" in review_workflow
     assert "Verify prek without pull-request context" in review_workflow
     assert "UV_LOCKED=1 uv run --locked prek run --all-files" in review_workflow
+
+
+@pytest.mark.parametrize(
+    "workflow_path",
+    [
+        Path(".github/workflows/pytest_check.yml"),
+        Path(".github/workflows/prek-autofix-review.yml"),
+    ],
+)
+def test_dispatched_release_checkout_requires_the_candidate_sha(
+    workflow_path: Path,
+) -> None:
+    """Accept a distinct controller SHA only when checkout reaches the candidate.
+
+    Args:
+        workflow_path (Path): Caller workflow containing the dispatch guards.
+    """
+    workflow = (Path(__file__).parents[1] / workflow_path).read_text()
+    input_guard = workflow_step_block(workflow, "Require expected release commit")
+    checkout_guard = workflow_step_block(workflow, "Require checked-out release commit")
+    candidate_sha = "a" * 40
+    controller_sha = "b" * 40
+
+    def run_guard(
+        step: str, expected_sha: str, checked_out_sha: str
+    ) -> subprocess.CompletedProcess[str]:
+        """Execute the extracted guard with a controlled checkout identity.
+
+        Args:
+            step (str): Workflow step containing the shell guard.
+            expected_sha (str): Candidate requested by the release controller.
+            checked_out_sha (str): Synthetic local Git HEAD value.
+
+        Returns:
+            subprocess.CompletedProcess[str]: Completed shell-guard process.
+        """
+        script = (
+            step.split("        run: |\n", maxsplit=1)[1]
+            .split("\n      - ", maxsplit=1)[0]
+            .replace("          ", "")
+        )
+        command = (
+            'git() { [[ "$1 $2" == "rev-parse HEAD" ]] && printf "%s\\n" "$CHECKED_OUT_SHA"; }\n'
+            + script
+        )
+        return subprocess.run(
+            ["bash", "-c", command],
+            check=False,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "EXPECTED_SHA": expected_sha,
+                "CHECKED_OUT_SHA": checked_out_sha,
+                "GITHUB_SHA": controller_sha,
+            },
+        )
+
+    assert run_guard(input_guard, candidate_sha, candidate_sha).returncode == 0
+    assert run_guard(checkout_guard, candidate_sha, candidate_sha).returncode == 0
+    assert run_guard(input_guard, "invalid", candidate_sha).returncode != 0
+    assert run_guard(checkout_guard, candidate_sha, controller_sha).returncode != 0
 
 
 def test_release_workflow_cleans_the_validation_ref_only_after_pypi_succeeds() -> None:
@@ -910,6 +1045,21 @@ def test_prerelease_event_sha_must_match_the_tagged_default_branch_commit(tmp_pa
         event_sha=prerelease_sha,
     )
     assert accepted.mode == "prerelease"
+    (worktree / "README.md").write_text("default branch advanced\n")
+    git(worktree, "add", "README.md")
+    git(worktree, "commit", "-m", "advance default branch")
+    git(worktree, "push", "origin", "main")
+    git(worktree, "fetch", "origin", "main")
+
+    advanced = release_refs.validate_state(
+        worktree,
+        release_tag="v1.4.2rc1",
+        target_ref="refs/remotes/origin/main",
+        prerelease=True,
+        event_sha=prerelease_sha,
+    )
+    assert advanced.mode == "prerelease"
+    assert advanced.source_sha == prerelease_sha
     with pytest.raises(release_refs.ReleaseStateError, match="matching default-branch"):
         release_refs.validate_state(
             worktree,

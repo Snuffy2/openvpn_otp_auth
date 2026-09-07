@@ -30,5 +30,6 @@ deleted only after PyPI confirms publication; a failed upload retains it for
 diagnosis.
 
 Prereleases must already be matching commits reachable from `main`; they are
-validated without mutating refs or publishing to a registry. The intentional
-manual `workflow_dispatch` path remains the route for TestPyPI publication.
+validated against the same exact-SHA review and pytest gates without mutating
+refs or publishing to a registry. The intentional manual `workflow_dispatch`
+path remains the route for TestPyPI publication.

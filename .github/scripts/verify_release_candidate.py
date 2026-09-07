@@ -36,7 +36,7 @@ MAX_ARCHIVE_MEMBERS = 64
 VERSION_PATTERN = re.compile(r'^VERSION = "([^"]+)"$', re.MULTILINE)
 _NUMERIC_COMPONENT = r"(?:0|[1-9][0-9]*)"
 RELEASE_TAG_PATTERN = re.compile(
-    rf"^v{_NUMERIC_COMPONENT}(?:\.{_NUMERIC_COMPONENT}){{1,3}}(?:(?:a|b|rc)\d+)?$"
+    rf"^v{_NUMERIC_COMPONENT}(?:\.{_NUMERIC_COMPONENT}){{1,3}}(?:(?:a|b|rc)[0-9]+)?$"
 )
 
 
