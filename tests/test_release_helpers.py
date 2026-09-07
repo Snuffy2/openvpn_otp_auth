@@ -552,6 +552,8 @@ def create_release_repository(tmp_path: Path) -> tuple[Path, Path, str, str]:
     worktree = tmp_path / "worktree"
     subprocess.run(["git", "clone", str(remote), str(worktree)], check=True, capture_output=True)
     git(worktree, "checkout", "main")
+    git(worktree, "config", "user.name", "Test")
+    git(worktree, "config", "user.email", "test@example.invalid")
     return worktree, remote, initial_sha, initial_tag_oid
 
 
@@ -564,8 +566,6 @@ def create_candidate_commit(worktree: Path) -> str:
     Returns:
         Candidate commit SHA.
     """
-    git(worktree, "config", "user.name", "Test")
-    git(worktree, "config", "user.email", "test@example.invalid")
     version = worktree / "src" / "openvpn_otp_auth" / "_version.py"
     version.write_text('VERSION = "v1.4.2"\n')
     git(worktree, "add", str(version.relative_to(worktree)))
@@ -689,7 +689,7 @@ def test_prerelease_event_sha_must_match_the_tagged_default_branch_commit(tmp_pa
 
 def test_resume_rejects_a_candidate_with_extra_changes(tmp_path: Path) -> None:
     """Resume accepts only a one-file deterministic child of the event commit."""
-    worktree, remote, base_sha, tag_oid = create_release_repository(tmp_path)
+    worktree, _, base_sha, tag_oid = create_release_repository(tmp_path)
     candidate_sha = create_candidate_commit(worktree)
     (worktree / "README.md").write_text("forged extra change\n")
     git(worktree, "add", "README.md")

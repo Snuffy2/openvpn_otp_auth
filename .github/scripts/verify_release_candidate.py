@@ -521,6 +521,7 @@ def verify_wheel(
         wheel_path: Wheel from the candidate artifact.
         expected: Expected package bytes.
         release_tag: Requested release tag.
+        source_root: Trusted source checkout used to derive package metadata.
 
     Raises:
         CandidateVerificationError: If archive members or payloads differ.
@@ -588,6 +589,34 @@ def verify_wheel(
         raise CandidateVerificationError(f"Could not inspect wheel: {error}") from error
 
 
+def trusted_test_manifest(source_root: Path, archive_root: str) -> dict[str, bytes]:
+    """Return trusted test files included by the source distribution.
+
+    Args:
+        source_root: Trusted source checkout.
+        archive_root: Top-level source distribution directory.
+
+    Returns:
+        Mapping of archive member names to trusted test bytes.
+
+    Raises:
+        CandidateVerificationError: If a trusted test path is unsafe.
+    """
+    trusted_tests = source_root / "tests"
+    if not trusted_tests.exists():
+        return {}
+    if not trusted_tests.is_dir() or trusted_tests.is_symlink():
+        raise CandidateVerificationError("Trusted test source directory is unsafe.")
+
+    payload: dict[str, bytes] = {}
+    for test_path in sorted(trusted_tests.rglob("test_*.py")):
+        if test_path.is_symlink() or not test_path.is_file():
+            raise CandidateVerificationError(f"Trusted test source is unsafe: {test_path}")
+        relative = test_path.relative_to(source_root).as_posix()
+        payload[f"{archive_root}/{relative}"] = test_path.read_bytes()
+    return payload
+
+
 def verify_sdist(
     sdist_path: Path, expected: dict[str, bytes], release_tag: str, source_root: Path
 ) -> None:
@@ -597,6 +626,7 @@ def verify_sdist(
         sdist_path: Source distribution from the candidate artifact.
         expected: Expected package bytes.
         release_tag: Requested release tag.
+        source_root: Trusted source checkout used to derive package metadata.
 
     Raises:
         CandidateVerificationError: If archive members or payloads differ.
@@ -624,19 +654,10 @@ def verify_sdist(
         f"{root}/src/{PROJECT_STEM}",
         f"{root}/src/{PROJECT_STEM}.egg-info",
     }
-    trusted_tests = source_root / "tests"
-    trusted_test_payload: dict[str, bytes] = {}
-    if trusted_tests.exists():
-        if not trusted_tests.is_dir() or trusted_tests.is_symlink():
-            raise CandidateVerificationError("Trusted test source directory is unsafe.")
-        for test_path in sorted(trusted_tests.rglob("test_*.py")):
-            if test_path.is_symlink() or not test_path.is_file():
-                raise CandidateVerificationError(f"Trusted test source is unsafe: {test_path}")
-            relative = test_path.relative_to(source_root).as_posix()
-            trusted_test_payload[f"{root}/{relative}"] = test_path.read_bytes()
-        expected_names.update(trusted_test_payload)
-        if trusted_test_payload:
-            expected_directories.add(f"{root}/tests")
+    trusted_test_payload = trusted_test_manifest(source_root, root)
+    expected_names.update(trusted_test_payload)
+    if trusted_test_payload:
+        expected_directories.add(f"{root}/tests")
     contents: dict[str, bytes] = {}
     directories: set[str] = set()
     total = 0
