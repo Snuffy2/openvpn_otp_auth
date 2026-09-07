@@ -773,10 +773,43 @@ def test_existing_release_checks_accept_an_exact_dispatched_candidate_sha() -> N
         assert '[[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]' in workflow
 
     assert "ref: ${{ inputs.expected_sha || github.sha }}" in pytest_workflow
-    assert "github.event.pull_request.number || github.ref" in review_workflow
+    assert (
+        "github.event.pull_request.number || inputs.expected_sha || github.ref" in review_workflow
+    )
     assert "github.event_name == 'pull_request'" in review_workflow
     assert "Verify prek without pull-request context" in review_workflow
     assert "UV_LOCKED=1 uv run --locked prek run --all-files" in review_workflow
+
+
+def test_release_gate_dispatch_concurrency_isolated_by_candidate_sha() -> None:
+    """Dispatches isolate candidates while preserving pull-request and push grouping."""
+    workflow = (Path(__file__).parents[1] / ".github/workflows/prek-autofix-review.yml").read_text()
+
+    assert (
+        "group: prek-autofix-${{ github.event.pull_request.number || "
+        "inputs.expected_sha || github.ref }}" in workflow
+    )
+    assert "cancel-in-progress: true" in workflow
+
+    def group(pull_request: str = "", expected_sha: str = "", ref: str = "") -> str:
+        """Resolve the ordered GitHub expression used by the asserted workflow text.
+
+        Args:
+            pull_request (str): Optional pull request number.
+            expected_sha (str): Optional immutable dispatched candidate SHA.
+            ref (str): Fallback branch or tag ref.
+
+        Returns:
+            str: The rendered concurrency key.
+        """
+        return "prek-autofix-" + (pull_request or expected_sha or ref)
+
+    assert group(expected_sha="a" * 40) != group(expected_sha="b" * 40)
+    assert group(expected_sha="a" * 40) == group(expected_sha="a" * 40)
+    assert (
+        group(pull_request="37", expected_sha="a" * 40, ref="refs/heads/main") == "prek-autofix-37"
+    )
+    assert group(ref="refs/heads/main") == "prek-autofix-refs/heads/main"
 
 
 @pytest.mark.parametrize(
