@@ -10,6 +10,7 @@ from email.parser import BytesParser
 from email.policy import default
 import gzip
 import hashlib
+import importlib.util
 from io import StringIO
 from pathlib import Path
 import re
@@ -19,7 +20,7 @@ import struct
 import sys
 import tarfile
 import tomllib
-from typing import BinaryIO
+from typing import Any, BinaryIO
 import zipfile
 
 VERSION_FILE = Path("src/openvpn_otp_auth/_version.py")
@@ -33,10 +34,55 @@ MAX_ARCHIVE_MEMBER_BYTES = 50 * 1024 * 1024
 MAX_ARCHIVE_CONTENT_BYTES = 100 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 64
 VERSION_PATTERN = re.compile(r'^VERSION = "([^"]+)"$', re.MULTILINE)
+_NUMERIC_COMPONENT = r"(?:0|[1-9][0-9]*)"
+RELEASE_TAG_PATTERN = re.compile(
+    rf"^v{_NUMERIC_COMPONENT}(?:\.{_NUMERIC_COMPONENT}){{1,3}}(?:(?:a|b|rc)\d+)?$"
+)
 
 
 class CandidateVerificationError(RuntimeError):
     """Raised when an artifact cannot prove the expected candidate contents."""
+
+
+def generic_distribution_verifier() -> Any:
+    """Load the shared distribution-integrity core without packaging workflow scripts.
+
+    Returns:
+        The shared verifier module.
+
+    Raises:
+        CandidateVerificationError: If the shared verifier cannot be loaded.
+    """
+    verifier_path = Path(__file__).with_name("verify_python_distributions.py")
+    spec = importlib.util.spec_from_file_location("verify_python_distributions", verifier_path)
+    if spec is None or spec.loader is None:
+        raise CandidateVerificationError("Could not load the generic distribution verifier.")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def verify_generic_distributions(directory: Path, version: str) -> None:
+    """Apply shared wheel and source-distribution checks before package-specific proof.
+
+    Args:
+        directory: Candidate distribution directory.
+        version: Normalized PEP 440 distribution version.
+
+    Raises:
+        CandidateVerificationError: If generic distribution validation fails.
+    """
+    verifier = generic_distribution_verifier()
+    try:
+        verifier.verify_python_distributions(
+            directory,
+            distribution_stem=PROJECT_STEM,
+            metadata_name="openvpn-otp-auth",
+            version=version,
+            requires_python=">=3.14",
+        )
+    except verifier.DistributionVerificationError as error:
+        raise CandidateVerificationError(str(error)) from error
 
 
 def normalized_version(release_tag: str) -> str:
@@ -51,7 +97,7 @@ def normalized_version(release_tag: str) -> str:
     Raises:
         CandidateVerificationError: If the tag is not a supported package version.
     """
-    if not re.fullmatch(r"v\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?", release_tag):
+    if RELEASE_TAG_PATTERN.fullmatch(release_tag) is None:
         raise CandidateVerificationError(f"Unsupported release tag {release_tag!r}.")
     return release_tag.removeprefix("v")
 
@@ -831,6 +877,7 @@ def verify_candidate(
         release_tag,
         source_root,
     )
+    verify_generic_distributions(candidate_directory / DIST_DIRECTORY, version)
     copy_verified_artifacts(files, output_directory)
 
 

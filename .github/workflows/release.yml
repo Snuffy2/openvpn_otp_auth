@@ -41,10 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install --group dev -e .
-          prek run --all-files
-          mypy .
-          pytest
+          python -m pip install build twine
           mkdir -p release-candidate/dist
           cp src/openvpn_otp_auth/_version.py release-candidate/_version.py
           python -m build --outdir release-candidate/dist
@@ -122,9 +119,19 @@ jobs:
     name: Validate and atomically promote stable candidate
     needs: candidate
     if: github.event.repository.fork == false && github.event.release.prerelease == false
+    outputs:
+      candidate-sha: ${{ steps.candidate.outputs.sha }}
+      validation-ref: ${{ steps.validation_ref.outputs.name }}
     runs-on: ubuntu-latest
     permissions:
+      actions: write
+      checks: read
       contents: write
+      statuses: write
+    env:
+      REQUIRED_CHECKS: |
+        prek-autofix-review.yml::review
+        pytest_check.yml::pytest check and post coverage
     steps:
       - name: Require the default-branch release target
         env:
@@ -159,6 +166,7 @@ jobs:
           printf '%s\n' "$state" >> "$GITHUB_OUTPUT"
           source_sha="$(awk -F= '$1 == "source-sha" { print $2 }' <<< "$state")"
           [[ -n "$source_sha" ]]
+          echo "workflow-sha=$source_sha" >> "$GITHUB_OUTPUT"
           mode="$(awk -F= '$1 == "mode" { print $2 }' <<< "$state")"
           if [[ "$mode" == fresh ]]; then
             [[ "$source_sha" == "$RELEASE_EVENT_SHA" ]]
@@ -204,6 +212,34 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Release $RELEASE_TAG"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Publish candidate to an isolated validation branch
+        id: validation_ref
+        env:
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          temp_ref="release-validation/${RELEASE_TAG}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git check-ref-format --branch "$temp_ref"
+          gh auth setup-git --hostname github.com
+          git push origin "$CANDIDATE_SHA:refs/heads/$temp_ref"
+          echo "name=$temp_ref" >> "$GITHUB_OUTPUT"
+      - name: Dispatch and verify immutable release gates
+        env:
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
+          WORKFLOW_REF: ${{ github.event.repository.default_branch }}
+          WORKFLOW_SHA: ${{ steps.state.outputs['workflow-sha'] }}
+        run: |
+          set -euo pipefail
+          required_check_args=()
+          while IFS= read -r required_check; do
+            [[ -z "$required_check" ]] || required_check_args+=(--required-check "$required_check")
+          done <<< "$REQUIRED_CHECKS"
+          python .github/scripts/verify_release_checks.py \
+            --repository "$GITHUB_REPOSITORY" --workflow-ref "$WORKFLOW_REF" \
+            --workflow-sha "$WORKFLOW_SHA" --sha "$CANDIDATE_SHA" \
+            "${required_check_args[@]}"
       - name: Atomically advance default branch and annotated release tag
         if: steps.state.outputs.mode == 'fresh'
         env:
@@ -266,6 +302,34 @@ jobs:
           path: dist/
       - name: Publish the verified distribution to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  cleanup_validation_ref:
+    name: Delete validated release branch
+    needs: [promote_stable, publish]
+    if: github.event.repository.fork == false && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout trusted default-branch workflow revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Delete the verified temporary branch
+        env:
+          CANDIDATE_SHA: ${{ needs.promote_stable.outputs.candidate-sha }}
+          GH_TOKEN: ${{ github.token }}
+          TEMP_REF: ${{ needs.promote_stable.outputs.validation-ref }}
+        run: |
+          set -euo pipefail
+          [[ -n "$TEMP_REF" ]]
+          git fetch --no-tags origin "refs/heads/$TEMP_REF:refs/remotes/origin/$TEMP_REF"
+          [[ "$(git rev-parse "refs/remotes/origin/$TEMP_REF")" == "$CANDIDATE_SHA" ]]
+          gh auth setup-git --hostname github.com
+          git push --force-with-lease="refs/heads/$TEMP_REF:$CANDIDATE_SHA" \
+            origin --delete "$TEMP_REF"
 
   publish_testpypi:
     name: Publish package to TestPyPI

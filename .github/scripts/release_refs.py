@@ -11,7 +11,10 @@ import subprocess
 import sys
 
 VERSION_FILE = Path("src/openvpn_otp_auth/_version.py")
-RELEASE_TAG_PATTERN = re.compile(r"^v\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?$")
+_NUMERIC_COMPONENT = r"(?:0|[1-9][0-9]*)"
+RELEASE_TAG_PATTERN = re.compile(
+    rf"^v{_NUMERIC_COMPONENT}(?:\.{_NUMERIC_COMPONENT}){{1,3}}(?:(?:a|b|rc)\d+)?$"
+)
 VERSION_PATTERN = re.compile(r'^VERSION = "([^"]+)"$', re.MULTILINE)
 
 

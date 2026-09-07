@@ -269,12 +269,14 @@ def test_verified_candidate_copies_exact_trusted_payload(
     )
 
 
-def test_verified_candidate_accepts_artifacts_from_a_real_local_build(tmp_path: Path) -> None:
+@pytest.mark.parametrize("release_tag", ["v1.2", "v1.2.3", "v1.2.3.4"])
+def test_verified_candidate_accepts_artifacts_from_a_real_local_build(
+    tmp_path: Path, release_tag: str
+) -> None:
     """The verifier accepts wheel and sdist bytes produced by the package build backend."""
     project_root = Path(__file__).parents[1]
     trusted_source = project_root / "src" / "openvpn_otp_auth"
     trusted_version = trusted_source / "_version.py"
-    release_tag = "v1.4.2"
     build_project = tmp_path / "build-project"
     shutil.copytree(
         project_root,
@@ -298,16 +300,79 @@ def test_verified_candidate_accepts_artifacts_from_a_real_local_build(tmp_path: 
     )
     shutil.copyfile(build_version, handoff / "_version.py")
 
+    version = candidate.normalized_version(release_tag)
     assert {path.name for path in dist.iterdir()} == {
-        "openvpn_otp_auth-1.4.2-py3-none-any.whl",
-        "openvpn_otp_auth-1.4.2.tar.gz",
+        f"openvpn_otp_auth-{version}-py3-none-any.whl",
+        f"openvpn_otp_auth-{version}.tar.gz",
     }
     output = tmp_path / "verified"
     candidate.verify_candidate(handoff, trusted_source, trusted_version, output, release_tag)
 
     assert (output / "_version.py").read_bytes() == build_version.read_bytes()
-    assert (output / "dist" / "openvpn_otp_auth-1.4.2-py3-none-any.whl").is_file()
-    assert (output / "dist" / "openvpn_otp_auth-1.4.2.tar.gz").is_file()
+    assert (output / "dist" / f"openvpn_otp_auth-{version}-py3-none-any.whl").is_file()
+    assert (output / "dist" / f"openvpn_otp_auth-{version}.tar.gz").is_file()
+
+
+@pytest.mark.parametrize(
+    ("release_tag", "prerelease"),
+    [
+        ("v1.2", False),
+        ("v1.2.3", False),
+        ("v1.2.3.4", False),
+        ("v1.2rc1", True),
+        ("v1.2.3b2", True),
+        ("v1.2.3.4a3", True),
+    ],
+)
+def test_release_tag_policy_accepts_two_to_four_numeric_components(
+    release_tag: str, prerelease: bool
+) -> None:
+    """Both release boundaries accept the shared fixed numeric tag policy."""
+    release_refs.require_release_tag(release_tag)
+
+    assert release_refs.is_prerelease_tag(release_tag) is prerelease
+    assert candidate.normalized_version(release_tag) == release_tag.removeprefix("v")
+
+
+@pytest.mark.parametrize(
+    "release_tag", ["v1", "v01.2", "v1.2.3.4.5", "1.2", "v1.2.post1", "v1.2rc"]
+)
+def test_release_tag_policy_rejects_unsupported_versions(release_tag: str) -> None:
+    """Tag validation rejects unsupported component counts and PEP 440 forms."""
+    with pytest.raises(release_refs.ReleaseStateError, match="Unsupported release tag"):
+        release_refs.require_release_tag(release_tag)
+    with pytest.raises(candidate.CandidateVerificationError, match="Unsupported release tag"):
+        candidate.normalized_version(release_tag)
+
+
+@pytest.mark.parametrize(
+    "release_tag",
+    [
+        "v01.2",
+        "v1.02",
+        "v1.2.03",
+        "v1.2.3.04",
+        "v01.2rc1",
+        "v1.02rc1",
+        "v1.2.03rc1",
+        "v1.2.3.04rc1",
+    ],
+)
+@pytest.mark.parametrize("prerelease", [False, True])
+def test_leading_zero_tags_fail_before_prerelease_classification(
+    tmp_path: Path, release_tag: str, prerelease: bool
+) -> None:
+    """Leading-zero numeric components are invalid for either release selection."""
+    with pytest.raises(release_refs.ReleaseStateError, match="Unsupported release tag"):
+        release_refs.validate_state(
+            tmp_path,
+            release_tag=release_tag,
+            target_ref="refs/remotes/origin/main",
+            prerelease=prerelease,
+            event_sha="0" * 40,
+        )
+    with pytest.raises(candidate.CandidateVerificationError, match="Unsupported release tag"):
+        candidate.normalized_version(release_tag)
 
 
 def test_candidate_rejects_altered_package_payload_before_copy(
@@ -605,6 +670,50 @@ def test_release_workflow_requires_exact_staged_version_file() -> None:
     assert "git diff --cached --name-only -z" in creation
     assert '[[ "$staged_path" == src/openvpn_otp_auth/_version.py ]]' in creation
     assert "if IFS= read -r -d ''; then" in creation
+
+
+def test_release_workflow_dispatches_both_protected_checks_without_duplicate_ci() -> None:
+    """Stable promotion dispatches the existing review and pytest checks for B."""
+    workflow = (Path(__file__).parents[1] / ".github/workflows/release.yml").read_text()
+    candidate = workflow_step_block(workflow, "Test and build the candidate package")
+    dispatch = workflow_step_block(workflow, "Dispatch and verify immutable release gates")
+
+    assert "prek-autofix-review.yml::review" in workflow
+    assert "pytest_check.yml::pytest check and post coverage" in workflow
+    assert '--workflow-ref "$WORKFLOW_REF"' in dispatch
+    assert '--workflow-sha "$WORKFLOW_SHA"' in dispatch
+    assert '--sha "$CANDIDATE_SHA"' in dispatch
+    assert "prek run --all-files" not in candidate
+    assert "mypy ." not in candidate
+    assert "pytest" not in candidate
+
+
+def test_existing_release_checks_accept_an_exact_dispatched_candidate_sha() -> None:
+    """The required workflows retain their PR behavior and support trusted dispatches."""
+    root = Path(__file__).parents[1]
+    pytest_workflow = (root / ".github/workflows/pytest_check.yml").read_text()
+    review_workflow = (root / ".github/workflows/prek-autofix-review.yml").read_text()
+
+    for workflow in (pytest_workflow, review_workflow):
+        assert "workflow_dispatch:" in workflow
+        assert "expected_sha:" in workflow
+        assert '[[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]' in workflow
+
+    assert "ref: ${{ inputs.expected_sha || github.sha }}" in pytest_workflow
+    assert "github.event.pull_request.number || github.ref" in review_workflow
+    assert "github.event_name == 'pull_request'" in review_workflow
+    assert "Verify prek without pull-request context" in review_workflow
+    assert "UV_LOCKED=1 uv run --locked prek run --all-files" in review_workflow
+
+
+def test_release_workflow_cleans_the_validation_ref_only_after_pypi_succeeds() -> None:
+    """A failed package upload leaves the proven candidate ref available for diagnosis."""
+    workflow = (Path(__file__).parents[1] / ".github/workflows/release.yml").read_text()
+    cleanup = workflow[workflow.index("  cleanup_validation_ref:") :]
+
+    assert "needs: [promote_stable, publish]" in cleanup
+    assert "needs.publish.result == 'success'" in cleanup
+    assert '--force-with-lease="refs/heads/$TEMP_REF:$CANDIDATE_SHA"' in cleanup
 
 
 def test_testpypi_publish_job_does_not_cache_with_oidc_permissions() -> None:
