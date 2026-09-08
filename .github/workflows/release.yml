@@ -53,7 +53,7 @@ jobs:
             "refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
           [[ "$(git rev-parse HEAD)" == "$(git rev-parse "refs/remotes/origin/$DEFAULT_BRANCH")" ]]
           UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/release-tools" \
-            uv sync --locked --group dev --no-install-project
+            uv sync --locked --only-group dev --no-install-project
       - name: Checkout immutable release event commit
         env:
           RELEASE_EVENT_SHA: ${{ github.sha }}
@@ -449,9 +449,9 @@ jobs:
         run: |
           set -euo pipefail
           UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/testpypi-venv" \
-            uv run --locked --group dev python -m build --no-isolation
+            uv run --locked --only-group dev python -m build --no-isolation
           UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/testpypi-venv" \
-            uv run --locked --group dev twine check dist/*
+            uv run --locked --only-group dev twine check dist/*
       - name: Store TestPyPI distributions
         uses: actions/upload-artifact@v7
         with:
