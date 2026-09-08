@@ -81,6 +81,9 @@ def test_normalized_version_accepts_the_shared_ascii_pep_440_union(
     [
         "v1",
         "v01.2",
+        "v1.02",
+        "v1.2.03",
+        "v1.2.3.04",
         "v1.2.3.4.5",
         "1.2",
         "v1.2rc",

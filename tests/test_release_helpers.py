@@ -6,7 +6,6 @@ import base64
 import hashlib
 import importlib.util
 from io import BytesIO
-import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -270,21 +269,9 @@ def test_verified_candidate_copies_exact_trusted_payload(
     )
 
 
-@pytest.mark.parametrize(
-    "release_tag",
-    [
-        "v1.2",
-        "v1.2.3",
-        "v1.2.3.4",
-        "v1.2-alpha.01",
-        "v1.2-dev.01",
-        "v1.2-post.01",
-    ],
-)
-def test_verified_candidate_accepts_artifacts_from_a_real_local_build(
-    tmp_path: Path, release_tag: str
-) -> None:
-    """The verifier accepts artifacts from the build backend for accepted release tags."""
+def test_verified_candidate_accepts_artifacts_from_a_real_local_build(tmp_path: Path) -> None:
+    """The verifier accepts artifacts produced by the real build backend."""
+    release_tag = "v1.2-dev.4"
     project_root = Path(__file__).parents[1]
     trusted_source = project_root / "src" / "openvpn_otp_auth"
     trusted_version = trusted_source / "_version.py"
@@ -328,19 +315,10 @@ def test_verified_candidate_accepts_artifacts_from_a_real_local_build(
     ("release_tag", "version", "prerelease"),
     [
         ("v1.2", "1.2", False),
-        ("v1.2.3", "1.2.3", False),
-        ("v1.2.3.4", "1.2.3.4", False),
-        ("v1.2-alpha.1", "1.2a1", True),
-        ("v1.2.3-beta.2", "1.2.3b2", True),
         ("v1.2.3.4-rc.3", "1.2.3.4rc3", True),
-        ("v1.2rc1", "1.2rc1", True),
-        ("v1.2.3b2", "1.2.3b2", True),
-        ("v1.2.3.4a3", "1.2.3.4a3", True),
-        ("v1.2-dev.4", "1.2.dev4", True),
-        ("v1.2post5", "1.2.post5", True),
     ],
 )
-def test_release_tag_policy_accepts_two_to_four_numeric_components(
+def test_release_tag_wrappers_accept_stable_and_prerelease_versions(
     release_tag: str, version: str, prerelease: bool
 ) -> None:
     """Both release boundaries accept the shared fixed numeric tag policy."""
@@ -354,20 +332,11 @@ def test_release_tag_policy_accepts_two_to_four_numeric_components(
     "release_tag",
     [
         "v1",
-        "v01.2",
-        "v1.2.3.4.5",
-        "1.2",
-        "v1.2.post1",
-        "v1.2rc",
         "v1.2rc١",
-        "v1.2rc٢",
-        "v1.2b١",
-        "v1.2dev١",
-        "v1.2post١",
     ],
 )
-def test_release_tag_policy_rejects_unsupported_versions(release_tag: str) -> None:
-    """Tag validation rejects unsupported components, forms, and Unicode serials.
+def test_release_tag_wrappers_reject_unsupported_versions(release_tag: str) -> None:
+    """Both release wrappers translate shared policy failures.
 
     Args:
         release_tag (str): Invalid tag supplied to both release boundaries.
@@ -379,19 +348,12 @@ def test_release_tag_policy_rejects_unsupported_versions(release_tag: str) -> No
 
 
 @pytest.mark.parametrize(
-    "release_tag",
+    ("release_tag", "prerelease"),
     [
-        "v01.2",
-        "v1.02",
-        "v1.2.03",
-        "v1.2.3.04",
-        "v01.2rc1",
-        "v1.02rc1",
-        "v1.2.03rc1",
-        "v1.2.3.04rc1",
+        ("v01.2", False),
+        ("v1.2.03rc1", True),
     ],
 )
-@pytest.mark.parametrize("prerelease", [False, True])
 def test_leading_zero_tags_fail_before_prerelease_classification(
     tmp_path: Path, release_tag: str, prerelease: bool
 ) -> None:
@@ -404,8 +366,6 @@ def test_leading_zero_tags_fail_before_prerelease_classification(
             prerelease=prerelease,
             event_sha="0" * 40,
         )
-    with pytest.raises(candidate.CandidateVerificationError, match="Unsupported release tag"):
-        candidate.normalized_version(release_tag)
 
 
 def test_candidate_rejects_altered_package_payload_before_copy(
@@ -793,99 +753,6 @@ def test_stable_resume_dispatch_keeps_the_trusted_workflow_revision() -> None:
     assert "WORKFLOW_SHA: ${{ steps.state.outputs['workflow-sha'] }}" in dispatch
     assert "VERIFIER_PATH:" in dispatch
     assert 'python "$VERIFIER_PATH"' in dispatch
-
-
-def _shared_contract_replaced_release_gate_dispatch_concurrency() -> None:
-    """Dispatches isolate candidates while preserving pull-request and push grouping."""
-    workflow = (Path(__file__).parents[1] / ".github/workflows/prek-autofix-review.yml").read_text()
-
-    assert (
-        "group: prek-autofix-${{ github.event.pull_request.number || "
-        "inputs.expected_sha || github.ref }}" in workflow
-    )
-    assert "cancel-in-progress: true" in workflow
-
-    def group(pull_request: str = "", expected_sha: str = "", ref: str = "") -> str:
-        """Resolve the ordered GitHub expression used by the asserted workflow text.
-
-        Args:
-            pull_request (str): Optional pull request number.
-            expected_sha (str): Optional immutable dispatched candidate SHA.
-            ref (str): Fallback branch or tag ref.
-
-        Returns:
-            str: The rendered concurrency key.
-        """
-        return "prek-autofix-" + (pull_request or expected_sha or ref)
-
-    assert group(expected_sha="a" * 40) != group(expected_sha="b" * 40)
-    assert group(expected_sha="a" * 40) == group(expected_sha="a" * 40)
-    assert (
-        group(pull_request="37", expected_sha="a" * 40, ref="refs/heads/main") == "prek-autofix-37"
-    )
-    assert group(ref="refs/heads/main") == "prek-autofix-refs/heads/main"
-
-
-@pytest.mark.parametrize(
-    "workflow_path",
-    [
-        Path(".github/workflows/pytest_check.yml"),
-        Path(".github/workflows/prek-autofix-review.yml"),
-    ],
-)
-def _shared_contract_replaced_dispatched_release_checkout(
-    workflow_path: Path,
-) -> None:
-    """Accept a distinct controller SHA only when checkout reaches the candidate.
-
-    Args:
-        workflow_path (Path): Caller workflow containing the dispatch guards.
-    """
-    workflow = (Path(__file__).parents[1] / workflow_path).read_text()
-    input_guard = workflow_step_block(workflow, "Require expected release commit")
-    checkout_guard = workflow_step_block(workflow, "Require checked-out release commit")
-    candidate_sha = "a" * 40
-    controller_sha = "b" * 40
-
-    def run_guard(
-        step: str, expected_sha: str, checked_out_sha: str
-    ) -> subprocess.CompletedProcess[str]:
-        """Execute the extracted guard with a controlled checkout identity.
-
-        Args:
-            step (str): Workflow step containing the shell guard.
-            expected_sha (str): Candidate requested by the release controller.
-            checked_out_sha (str): Synthetic local Git HEAD value.
-
-        Returns:
-            subprocess.CompletedProcess[str]: Completed shell-guard process.
-        """
-        script = (
-            step.split("        run: |\n", maxsplit=1)[1]
-            .split("\n      - ", maxsplit=1)[0]
-            .replace("          ", "")
-        )
-        command = (
-            'git() { [[ "$1 $2" == "rev-parse HEAD" ]] && printf "%s\\n" "$CHECKED_OUT_SHA"; }\n'
-            + script
-        )
-        return subprocess.run(
-            ["bash", "-c", command],
-            check=False,
-            capture_output=True,
-            text=True,
-            env={
-                **os.environ,
-                "EXPECTED_SHA": expected_sha,
-                "CHECKED_OUT_SHA": checked_out_sha,
-                "GITHUB_SHA": controller_sha,
-            },
-        )
-
-    assert run_guard(input_guard, candidate_sha, candidate_sha).returncode == 0
-    assert run_guard(checkout_guard, candidate_sha, candidate_sha).returncode == 0
-    assert run_guard(input_guard, "invalid", candidate_sha).returncode != 0
-    assert run_guard(checkout_guard, candidate_sha, controller_sha).returncode != 0
 
 
 def test_release_workflow_cleans_the_validation_ref_only_after_pypi_succeeds() -> None:

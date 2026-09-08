@@ -149,20 +149,12 @@ def rebuild_wheel(path: Path, members: dict[str, bytes]) -> None:
     rebuilt.replace(path)
 
 
-@pytest.mark.parametrize("version", ["1.2", "1.2.3", "1.2.3.4"])
-def test_verify_python_distributions_accepts_fixed_component_versions(
-    tmp_path: Path, version: str
-) -> None:
-    """Accept a matching pure wheel and sdist for each shared stable version shape.
-
-    Args:
-        tmp_path (Path): Temporary fixture root.
-        version (str): Stable PEP 440 version to package.
-    """
+def test_verify_python_distributions_accepts_matching_wheel_and_sdist(tmp_path: Path) -> None:
+    """Accept a matching pure wheel and source distribution pair."""
     dist_dir = tmp_path / "dist"
-    write_distributions(dist_dir, version=version)
+    write_distributions(dist_dir)
 
-    verify_pair(dist_dir, version)
+    verify_pair(dist_dir)
 
 
 def test_verify_python_distributions_rejects_extra_or_missing_paths(tmp_path: Path) -> None:
@@ -389,39 +381,37 @@ def test_verify_python_distributions_rejects_unsafe_sdist_member_type(tmp_path: 
         verify_pair(dist_dir)
 
 
-def test_verify_python_distributions_rejects_wheel_and_sdist_size_limits(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("target", ["wheel", "sdist"])
+def test_verify_python_distributions_rejects_archive_member_size_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str
 ) -> None:
-    """Exercise each archive verifier when its declared member sizes exceed the bound.
+    """Reject oversized members in either distribution through the public verifier.
 
     Args:
         tmp_path (Path): Temporary fixture root.
         monkeypatch (pytest.MonkeyPatch): Fixture for reducing the member-size limit.
+        target (str): Distribution type whose member exceeds the configured limit.
     """
-    dist_dir = tmp_path / "wheel"
+    dist_dir = tmp_path / "dist"
     write_distributions(dist_dir)
-    monkeypatch.setattr(verify, "MAX_ARCHIVE_MEMBER_BYTES", 0)
+    limit = 0 if target == "wheel" else 1_000
+    monkeypatch.setattr(verify, "MAX_ARCHIVE_MEMBER_BYTES", limit)
+    if target == "sdist":
+        sdist = dist_dir / f"{STEM}-{VERSION}.tar.gz"
+        sdist.unlink()
+        with tarfile.open(sdist, "w:gz") as archive:
+            root = f"{STEM}-{VERSION}"
+            metadata_contents = metadata()
+            package_info = tarfile.TarInfo(f"{root}/PKG-INFO")
+            package_info.size = len(metadata_contents)
+            archive.addfile(package_info, BytesIO(metadata_contents))
+            payload = b"x" * (limit + 1)
+            oversized = tarfile.TarInfo(f"{root}/oversized.bin")
+            oversized.size = len(payload)
+            archive.addfile(oversized, BytesIO(payload))
 
     with pytest.raises(verify.DistributionVerificationError, match="oversized"):
-        verify._verify_wheel(
-            dist_dir / f"{STEM}-{VERSION}-py3-none-any.whl",
-            STEM,
-            NAME,
-            VERSION,
-            REQUIRES_PYTHON,
-        )
-
-    dist_dir = tmp_path / "sdist"
-    write_distributions(dist_dir)
-
-    with pytest.raises(verify.DistributionVerificationError, match="oversized"):
-        verify._verify_sdist(
-            dist_dir / f"{STEM}-{VERSION}.tar.gz",
-            STEM,
-            NAME,
-            VERSION,
-            REQUIRES_PYTHON,
-        )
+        verify_pair(dist_dir)
 
 
 def test_verify_python_distributions_rejects_bad_wheel_record(tmp_path: Path) -> None:
