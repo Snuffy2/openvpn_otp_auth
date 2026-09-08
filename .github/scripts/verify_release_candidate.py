@@ -34,14 +34,28 @@ MAX_ARCHIVE_MEMBER_BYTES = 50 * 1024 * 1024
 MAX_ARCHIVE_CONTENT_BYTES = 100 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 64
 VERSION_PATTERN = re.compile(r'^VERSION = "([^"]+)"$', re.MULTILINE)
-_NUMERIC_COMPONENT = r"(?:0|[1-9][0-9]*)"
-RELEASE_TAG_PATTERN = re.compile(
-    rf"^v{_NUMERIC_COMPONENT}(?:\.{_NUMERIC_COMPONENT}){{1,3}}(?:(?:a|b|rc)[0-9]+)?$"
-)
 
 
 class CandidateVerificationError(RuntimeError):
     """Raised when an artifact cannot prove the expected candidate contents."""
+
+
+def release_version_module() -> Any:
+    """Load the adjacent tag-policy module without packaging workflow scripts.
+
+    Returns:
+        The shared release tag policy module.
+
+    Raises:
+        CandidateVerificationError: If the adjacent policy module cannot be loaded.
+    """
+    policy_path = Path(__file__).with_name("release_version.py")
+    spec = importlib.util.spec_from_file_location("release_version", policy_path)
+    if spec is None or spec.loader is None:
+        raise CandidateVerificationError("Could not load the release version policy.")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def generic_distribution_verifier() -> Any:
@@ -97,9 +111,11 @@ def normalized_version(release_tag: str) -> str:
     Raises:
         CandidateVerificationError: If the tag is not a supported package version.
     """
-    if RELEASE_TAG_PATTERN.fullmatch(release_tag) is None:
-        raise CandidateVerificationError(f"Unsupported release tag {release_tag!r}.")
-    return release_tag.removeprefix("v")
+    policy = release_version_module()
+    try:
+        return policy.normalized_version(release_tag)
+    except policy.ReleaseTagError as error:
+        raise CandidateVerificationError(f"Unsupported release tag {release_tag!r}.") from error
 
 
 def version_from_text(text: str, *, source: str) -> str:

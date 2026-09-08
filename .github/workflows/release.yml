@@ -6,7 +6,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  group: release-${{ github.repository }}
+  queue: max
   cancel-in-progress: false
 
 permissions:
@@ -22,43 +23,79 @@ jobs:
     name: Build and test immutable release candidate
     if: github.event.repository.fork == false && github.event_name == 'release'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
-      - name: Checkout immutable release event commit
+      - name: Checkout trusted default-branch release tooling
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.sha }}
-          fetch-depth: 1
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
           persist-credentials: false
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-          cache: pip
-          cache-dependency-path: pyproject.toml
+      - name: Set up locked release tooling
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          ignore-nothing-to-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Bootstrap trusted locked build tooling
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --force --no-tags origin \
+            "refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
+          [[ "$(git rev-parse HEAD)" == "$(git rev-parse "refs/remotes/origin/$DEFAULT_BRANCH")" ]]
+          UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/release-tools" \
+            uv sync --locked --group dev --no-install-project
+      - name: Checkout immutable release event commit
+        env:
+          RELEASE_EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_EVENT_SHA" =~ ^[0-9a-f]{40}$ ]]
+          trusted_helpers="$RUNNER_TEMP/trusted-release-helpers"
+          mkdir -p "$trusted_helpers"
+          cp .github/scripts/release_version.py \
+            .github/scripts/verify_release_candidate.py "$trusted_helpers/"
+          git checkout --detach "$RELEASE_EVENT_SHA"
       - name: Prepare the release version in the isolated candidate
         env:
           RELEASE_EVENT_SHA: ${{ github.sha }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: python .github/scripts/verify_release_candidate.py prepare-version --release-tag "$RELEASE_TAG"
+        run: |
+          python "$RUNNER_TEMP/trusted-release-helpers/verify_release_candidate.py" \
+            prepare-version --release-tag "$RELEASE_TAG"
       - name: Test and build the candidate package
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install build twine
-          mkdir -p release-candidate/dist
-          cp src/openvpn_otp_auth/_version.py release-candidate/_version.py
-          python -m build --outdir release-candidate/dist
-          twine check release-candidate/dist/*
+          porcelain="$(git status --porcelain --untracked-files=all)"
+          [[ -z "$porcelain" || "$porcelain" == " M src/openvpn_otp_auth/_version.py" ]]
+          candidate_source="$RUNNER_TEMP/release-candidate-source"
+          candidate_dir="$RUNNER_TEMP/release-candidate"
+          mkdir -p "$candidate_dir/dist"
+          cp -a . "$candidate_source"
+          cp src/openvpn_otp_auth/_version.py "$candidate_source/src/openvpn_otp_auth/_version.py"
+          (
+            cd "$candidate_source"
+            "$RUNNER_TEMP/release-tools/bin/python" -m build --no-isolation --outdir "$candidate_dir/dist"
+            "$RUNNER_TEMP/release-tools/bin/twine" check "$candidate_dir"/dist/*
+          )
+          cp src/openvpn_otp_auth/_version.py "$candidate_dir/_version.py"
       - name: Store the bounded candidate handoff
         uses: actions/upload-artifact@v7
         with:
           name: release-candidate
           path: |
-            release-candidate/_version.py
-            release-candidate/dist/*.tar.gz
-            release-candidate/dist/*.whl
+            ${{ runner.temp }}/release-candidate/_version.py
+            ${{ runner.temp }}/release-candidate/dist/*.tar.gz
+            ${{ runner.temp }}/release-candidate/dist/*.whl
           if-no-files-found: error
           retention-days: 30
 
@@ -67,6 +104,7 @@ jobs:
     needs: candidate
     if: github.event.repository.fork == false && github.event.release.prerelease == true
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       actions: write
       checks: read
@@ -95,13 +133,19 @@ jobs:
         run: |
           set -euo pipefail
           workflow_sha="$(git rev-parse HEAD)"
-          trusted_verifier="$RUNNER_TEMP/verify_release_checks.py"
-          cp .github/scripts/verify_release_checks.py "$trusted_verifier"
+          trusted_helpers="$RUNNER_TEMP/trusted-release-helpers"
+          mkdir -p "$trusted_helpers"
+          cp .github/scripts/release_refs.py \
+            .github/scripts/release_version.py \
+            .github/scripts/verify_release_candidate.py \
+            .github/scripts/verify_python_distributions.py \
+            .github/scripts/verify_release_checks.py "$trusted_helpers/"
+          trusted_verifier="$trusted_helpers/verify_release_checks.py"
           git fetch --force --no-tags origin \
             "refs/heads/$RELEASE_TARGET:refs/remotes/origin/$RELEASE_TARGET" \
             "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
           [[ "$(git rev-parse HEAD)" == "$(git rev-parse "refs/remotes/origin/$RELEASE_TARGET")" ]]
-          state="$(python .github/scripts/release_refs.py validate \
+          state="$(python "$trusted_helpers/release_refs.py" validate \
             --release-tag "$RELEASE_TAG" \
             --target-ref "refs/remotes/origin/$RELEASE_TARGET" \
             --prerelease true \
@@ -114,6 +158,7 @@ jobs:
             echo "source-sha=$source_sha"
             echo "workflow-sha=$workflow_sha"
             echo "verifier-path=$trusted_verifier"
+            echo "helpers-path=$trusted_helpers"
           } >> "$GITHUB_OUTPUT"
           git checkout --detach "$source_sha"
       - name: Download the untrusted candidate handoff
@@ -126,7 +171,7 @@ jobs:
           RELEASE_EVENT_SHA: ${{ github.sha }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          python .github/scripts/verify_release_candidate.py verify \
+          python "${{ steps.state.outputs.helpers-path }}/verify_release_candidate.py" verify \
             --candidate-directory downloaded-candidate \
             --output-directory verified-candidate \
             --release-tag "$RELEASE_TAG"
@@ -155,6 +200,7 @@ jobs:
       candidate-sha: ${{ steps.candidate.outputs.sha }}
       validation-ref: ${{ steps.validation_ref.outputs.name }}
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       actions: write
       checks: read
@@ -183,13 +229,19 @@ jobs:
         run: |
           set -euo pipefail
           workflow_sha="$(git rev-parse HEAD)"
-          trusted_verifier="$RUNNER_TEMP/verify_release_checks.py"
-          cp .github/scripts/verify_release_checks.py "$trusted_verifier"
+          trusted_helpers="$RUNNER_TEMP/trusted-release-helpers"
+          mkdir -p "$trusted_helpers"
+          cp .github/scripts/release_refs.py \
+            .github/scripts/release_version.py \
+            .github/scripts/verify_release_candidate.py \
+            .github/scripts/verify_python_distributions.py \
+            .github/scripts/verify_release_checks.py "$trusted_helpers/"
+          trusted_verifier="$trusted_helpers/verify_release_checks.py"
           git fetch --force --no-tags origin \
             "refs/heads/$RELEASE_TARGET:refs/remotes/origin/$RELEASE_TARGET" \
             "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
           [[ "$(git rev-parse HEAD)" == "$(git rev-parse "refs/remotes/origin/$RELEASE_TARGET")" ]]
-          state="$(python .github/scripts/release_refs.py validate \
+          state="$(python "$trusted_helpers/release_refs.py" validate \
             --release-tag "$RELEASE_TAG" \
             --target-ref "refs/remotes/origin/$RELEASE_TARGET" \
             --prerelease false \
@@ -197,8 +249,11 @@ jobs:
           printf '%s\n' "$state" >> "$GITHUB_OUTPUT"
           source_sha="$(awk -F= '$1 == "source-sha" { print $2 }' <<< "$state")"
           [[ -n "$source_sha" ]]
-          echo "workflow-sha=$workflow_sha" >> "$GITHUB_OUTPUT"
-          echo "verifier-path=$trusted_verifier" >> "$GITHUB_OUTPUT"
+          {
+            echo "workflow-sha=$workflow_sha"
+            echo "verifier-path=$trusted_verifier"
+            echo "helpers-path=$trusted_helpers"
+          } >> "$GITHUB_OUTPUT"
           mode="$(awk -F= '$1 == "mode" { print $2 }' <<< "$state")"
           if [[ "$mode" == fresh ]]; then
             [[ "$source_sha" == "$RELEASE_EVENT_SHA" ]]
@@ -213,7 +268,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          python .github/scripts/verify_release_candidate.py verify \
+          python "${{ steps.state.outputs.helpers-path }}/verify_release_candidate.py" verify \
             --candidate-directory downloaded-candidate \
             --output-directory verified-candidate \
             --release-tag "$RELEASE_TAG"
@@ -232,6 +287,7 @@ jobs:
           fi
           cp verified-candidate/_version.py src/openvpn_otp_auth/_version.py
           git add src/openvpn_otp_auth/_version.py
+          test -z "$(git status --porcelain --untracked-files=all | grep -v '^M  src/openvpn_otp_auth/_version.py$')"
           git diff --cached --check
           git diff --cached --name-only -z | {
             IFS= read -r -d '' staged_path
@@ -288,7 +344,7 @@ jobs:
             "refs/heads/$RELEASE_TARGET:refs/remotes/origin/$RELEASE_TARGET" \
             "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
           gh auth setup-git --hostname github.com
-          python .github/scripts/release_refs.py promote \
+          python "${{ steps.state.outputs.helpers-path }}/release_refs.py" promote \
             --target-branch "$RELEASE_TARGET" \
             --expected-target-sha "$TARGET_SHA" \
             --release-tag "$RELEASE_TAG" \
@@ -305,7 +361,7 @@ jobs:
           git fetch --force --no-tags origin \
             "refs/heads/$RELEASE_TARGET:refs/remotes/origin/$RELEASE_TARGET" \
             "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
-          state="$(python .github/scripts/release_refs.py validate \
+          state="$(python "${{ steps.state.outputs.helpers-path }}/release_refs.py" validate \
             --release-tag "$RELEASE_TAG" \
             --target-ref "refs/remotes/origin/$RELEASE_TARGET" \
             --prerelease false \
@@ -324,6 +380,7 @@ jobs:
     needs: promote_stable
     if: github.event.repository.fork == false && needs.promote_stable.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: pypi
     permissions:
       id-token: write
@@ -341,6 +398,7 @@ jobs:
     needs: [promote_stable, publish]
     if: github.event.repository.fork == false && needs.publish.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -364,29 +422,59 @@ jobs:
           git push --force-with-lease="refs/heads/$TEMP_REF:$CANDIDATE_SHA" \
             origin --delete "$TEMP_REF"
 
-  publish_testpypi:
-    name: Publish package to TestPyPI
+  build_testpypi:
+    name: Build package for TestPyPI
     if: github.event.repository.fork == false && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    environment: testpypi
+    timeout-minutes: 30
     permissions:
       contents: read
-      id-token: write
     steps:
       - name: Checkout manually selected source
         uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14"
+      - name: Set up locked release tooling
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          ignore-nothing-to-cache: true
+          cache-dependency-glob: uv.lock
       - name: Build the manually selected package
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip build twine
-          python -m build
-          twine check dist/*
+          UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/testpypi-venv" \
+            uv run --locked --group dev python -m build --no-isolation
+          UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/testpypi-venv" \
+            uv run --locked --group dev twine check dist/*
+      - name: Store TestPyPI distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: testpypi-python-distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish_testpypi:
+    name: Publish package to TestPyPI
+    needs: build_testpypi
+    if: github.event.repository.fork == false && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download TestPyPI distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: testpypi-python-distributions
+          path: dist/
       - name: Publish package to TestPyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:

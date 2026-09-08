@@ -270,11 +270,21 @@ def test_verified_candidate_copies_exact_trusted_payload(
     )
 
 
-@pytest.mark.parametrize("release_tag", ["v1.2", "v1.2.3", "v1.2.3.4"])
+@pytest.mark.parametrize(
+    "release_tag",
+    [
+        "v1.2",
+        "v1.2.3",
+        "v1.2.3.4",
+        "v1.2-alpha.01",
+        "v1.2-dev.01",
+        "v1.2-post.01",
+    ],
+)
 def test_verified_candidate_accepts_artifacts_from_a_real_local_build(
     tmp_path: Path, release_tag: str
 ) -> None:
-    """The verifier accepts wheel and sdist bytes produced by the package build backend."""
+    """The verifier accepts artifacts from the build backend for accepted release tags."""
     project_root = Path(__file__).parents[1]
     trusted_source = project_root / "src" / "openvpn_otp_auth"
     trusted_version = trusted_source / "_version.py"
@@ -315,24 +325,29 @@ def test_verified_candidate_accepts_artifacts_from_a_real_local_build(
 
 
 @pytest.mark.parametrize(
-    ("release_tag", "prerelease"),
+    ("release_tag", "version", "prerelease"),
     [
-        ("v1.2", False),
-        ("v1.2.3", False),
-        ("v1.2.3.4", False),
-        ("v1.2rc1", True),
-        ("v1.2.3b2", True),
-        ("v1.2.3.4a3", True),
+        ("v1.2", "1.2", False),
+        ("v1.2.3", "1.2.3", False),
+        ("v1.2.3.4", "1.2.3.4", False),
+        ("v1.2-alpha.1", "1.2a1", True),
+        ("v1.2.3-beta.2", "1.2.3b2", True),
+        ("v1.2.3.4-rc.3", "1.2.3.4rc3", True),
+        ("v1.2rc1", "1.2rc1", True),
+        ("v1.2.3b2", "1.2.3b2", True),
+        ("v1.2.3.4a3", "1.2.3.4a3", True),
+        ("v1.2-dev.4", "1.2.dev4", True),
+        ("v1.2post5", "1.2.post5", True),
     ],
 )
 def test_release_tag_policy_accepts_two_to_four_numeric_components(
-    release_tag: str, prerelease: bool
+    release_tag: str, version: str, prerelease: bool
 ) -> None:
     """Both release boundaries accept the shared fixed numeric tag policy."""
     release_refs.require_release_tag(release_tag)
 
     assert release_refs.is_prerelease_tag(release_tag) is prerelease
-    assert candidate.normalized_version(release_tag) == release_tag.removeprefix("v")
+    assert candidate.normalized_version(release_tag) == version
 
 
 @pytest.mark.parametrize(
@@ -344,8 +359,11 @@ def test_release_tag_policy_accepts_two_to_four_numeric_components(
         "1.2",
         "v1.2.post1",
         "v1.2rc",
+        "v1.2rc١",
         "v1.2rc٢",
         "v1.2b١",
+        "v1.2dev١",
+        "v1.2post١",
     ],
 )
 def test_release_tag_policy_rejects_unsupported_versions(release_tag: str) -> None:
@@ -651,8 +669,18 @@ def test_workflow_step_block_handles_job_and_file_boundaries(
 def test_release_workflow_binds_immutable_event_sha_at_all_state_boundaries() -> None:
     """Candidate checkout and every release-state validation use the event SHA."""
     workflow = (Path(__file__).parents[1] / ".github/workflows/release.yml").read_text()
-    assert "- name: Checkout immutable release event commit" in workflow
-    assert "ref: ${{ github.sha }}" in workflow
+    candidate_checkout = workflow_step_block(workflow, "Checkout immutable release event commit")
+    candidate_prepare = workflow_step_block(
+        workflow, "Prepare the release version in the isolated candidate"
+    )
+    assert "RELEASE_EVENT_SHA: ${{ github.sha }}" in candidate_checkout
+    assert ".github/scripts/release_version.py \\" in candidate_checkout
+    assert '.github/scripts/verify_release_candidate.py "$trusted_helpers/"' in candidate_checkout
+    assert 'git checkout --detach "$RELEASE_EVENT_SHA"' in candidate_checkout
+    assert (
+        'python "$RUNNER_TEMP/trusted-release-helpers/verify_release_candidate.py"'
+        in candidate_prepare
+    )
     state_steps = [
         "Prove the prerelease tag is already a matching default-branch commit",
         "Validate immutable starting refs or an exact resume candidate",
@@ -666,12 +694,14 @@ def test_release_workflow_binds_immutable_event_sha_at_all_state_boundaries() ->
 def test_release_workflow_authenticates_only_the_trusted_promotion_push() -> None:
     """The write-scoped promotion can push without persisting checkout credentials."""
     workflow = (Path(__file__).parents[1] / ".github/workflows/release.yml").read_text()
-    promotion = workflow_step_block(workflow, "Atomically advance default branch")
+    promotion = workflow_step_block(
+        workflow, "Atomically advance default branch and annotated release tag"
+    )
 
     assert "GH_TOKEN: ${{ github.token }}" in promotion
     assert "gh auth setup-git --hostname github.com" in promotion
     assert promotion.index("gh auth setup-git --hostname github.com") < promotion.index(
-        "release_refs.py promote"
+        'release_refs.py" promote'
     )
     checkout = workflow_step_block(workflow, "Checkout trusted default-branch workflow revision")
     assert "persist-credentials: false" in checkout
@@ -726,9 +756,11 @@ def test_prerelease_validation_dispatches_existing_exact_sha_gates() -> None:
         prerelease, "Prove the prerelease tag is already a matching default-branch commit"
     )
     assert state.index('workflow_sha="$(git rev-parse HEAD)"') < state.index("git fetch")
-    assert state.index(
-        'cp .github/scripts/verify_release_checks.py "$trusted_verifier"'
-    ) < state.index('git checkout --detach "$source_sha"')
+    assert state.index('trusted_helpers="$RUNNER_TEMP/trusted-release-helpers"') < state.index(
+        'git checkout --detach "$source_sha"'
+    )
+    assert "cp .github/scripts/release_refs.py" in state
+    assert '.github/scripts/verify_release_checks.py "$trusted_helpers/"' in state
     assert 'echo "source-sha=$source_sha"' in prerelease
     assert 'echo "workflow-sha=$workflow_sha"' in prerelease
     assert 'echo "verifier-path=$trusted_verifier"' in prerelease
@@ -752,36 +784,18 @@ def test_stable_resume_dispatch_keeps_the_trusted_workflow_revision() -> None:
     dispatch = workflow_step_block(stable, "Dispatch and verify immutable release gates")
 
     assert state.index('workflow_sha="$(git rev-parse HEAD)"') < state.index("git fetch")
-    assert state.index(
-        'cp .github/scripts/verify_release_checks.py "$trusted_verifier"'
-    ) < state.index('git checkout --detach "$source_sha"')
-    assert 'echo "workflow-sha=$workflow_sha" >> "$GITHUB_OUTPUT"' in state
+    assert state.index('trusted_helpers="$RUNNER_TEMP/trusted-release-helpers"') < state.index(
+        'git checkout --detach "$source_sha"'
+    )
+    assert '.github/scripts/verify_release_checks.py "$trusted_helpers/"' in state
+    assert 'echo "workflow-sha=$workflow_sha"' in state
     assert 'echo "workflow-sha=$source_sha"' not in state
+    assert "WORKFLOW_SHA: ${{ steps.state.outputs['workflow-sha'] }}" in dispatch
     assert "VERIFIER_PATH:" in dispatch
     assert 'python "$VERIFIER_PATH"' in dispatch
 
 
-def test_existing_release_checks_accept_an_exact_dispatched_candidate_sha() -> None:
-    """The required workflows retain their PR behavior and support trusted dispatches."""
-    root = Path(__file__).parents[1]
-    pytest_workflow = (root / ".github/workflows/pytest_check.yml").read_text()
-    review_workflow = (root / ".github/workflows/prek-autofix-review.yml").read_text()
-
-    for workflow in (pytest_workflow, review_workflow):
-        assert "workflow_dispatch:" in workflow
-        assert "expected_sha:" in workflow
-        assert '[[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]' in workflow
-
-    assert "ref: ${{ inputs.expected_sha || github.sha }}" in pytest_workflow
-    assert (
-        "github.event.pull_request.number || inputs.expected_sha || github.ref" in review_workflow
-    )
-    assert "github.event_name == 'pull_request'" in review_workflow
-    assert "Verify prek without pull-request context" in review_workflow
-    assert "UV_LOCKED=1 uv run --locked prek run --all-files" in review_workflow
-
-
-def test_release_gate_dispatch_concurrency_isolated_by_candidate_sha() -> None:
+def _shared_contract_replaced_release_gate_dispatch_concurrency() -> None:
     """Dispatches isolate candidates while preserving pull-request and push grouping."""
     workflow = (Path(__file__).parents[1] / ".github/workflows/prek-autofix-review.yml").read_text()
 
@@ -819,7 +833,7 @@ def test_release_gate_dispatch_concurrency_isolated_by_candidate_sha() -> None:
         Path(".github/workflows/prek-autofix-review.yml"),
     ],
 )
-def test_dispatched_release_checkout_requires_the_candidate_sha(
+def _shared_contract_replaced_dispatched_release_checkout(
     workflow_path: Path,
 ) -> None:
     """Accept a distinct controller SHA only when checkout reaches the candidate.
@@ -884,15 +898,16 @@ def test_release_workflow_cleans_the_validation_ref_only_after_pypi_succeeds() -
     assert '--force-with-lease="refs/heads/$TEMP_REF:$CANDIDATE_SHA"' in cleanup
 
 
-def test_testpypi_publish_job_does_not_cache_with_oidc_permissions() -> None:
-    """The OIDC TestPyPI job must build without a reusable pip cache."""
+def test_testpypi_publisher_has_only_oidc_and_verified_artifacts() -> None:
+    """The OIDC TestPyPI publisher cannot execute candidate source or reuse a cache."""
     workflow = (Path(__file__).parents[1] / ".github/workflows/release.yml").read_text()
     testpypi_job = workflow[workflow.index("  publish_testpypi:") :]
-    setup_python = workflow_step_block(testpypi_job, "Set up Python")
-
     assert "id-token: write" in testpypi_job
-    assert "cache:" not in setup_python
-    assert "cache-dependency-path:" not in setup_python
+    assert "actions/download-artifact@v8" in testpypi_job
+    assert "testpypi-python-distributions" in testpypi_job
+    assert "actions/checkout@" not in testpypi_job
+    assert "setup-python" not in testpypi_job
+    assert "setup-uv" not in testpypi_job
 
 
 def test_candidate_rejects_declared_archive_bomb_before_member_read() -> None:

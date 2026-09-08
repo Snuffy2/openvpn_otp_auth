@@ -5,21 +5,37 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 from dataclasses import dataclass
+import importlib.util
 from pathlib import Path
 import re
 import subprocess
 import sys
+from typing import Any
 
 VERSION_FILE = Path("src/openvpn_otp_auth/_version.py")
-_NUMERIC_COMPONENT = r"(?:0|[1-9][0-9]*)"
-RELEASE_TAG_PATTERN = re.compile(
-    rf"^v{_NUMERIC_COMPONENT}(?:\.{_NUMERIC_COMPONENT}){{1,3}}(?:(?:a|b|rc)[0-9]+)?$"
-)
 VERSION_PATTERN = re.compile(r'^VERSION = "([^"]+)"$', re.MULTILINE)
 
 
 class ReleaseStateError(RuntimeError):
     """Raised when release metadata or references are not safe to promote."""
+
+
+def release_version_module() -> Any:
+    """Load the adjacent tag-policy module without packaging workflow scripts.
+
+    Returns:
+        The shared release tag policy module.
+
+    Raises:
+        ReleaseStateError: If the adjacent policy module cannot be loaded.
+    """
+    policy_path = Path(__file__).with_name("release_version.py")
+    spec = importlib.util.spec_from_file_location("release_version", policy_path)
+    if spec is None or spec.loader is None:
+        raise ReleaseStateError("Could not load the release version policy.")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 @dataclass(frozen=True)
@@ -68,8 +84,11 @@ def require_release_tag(release_tag: str) -> None:
     Raises:
         ReleaseStateError: If the tag cannot represent a package release.
     """
-    if not RELEASE_TAG_PATTERN.fullmatch(release_tag):
-        raise ReleaseStateError(f"Unsupported release tag {release_tag!r}.")
+    policy = release_version_module()
+    try:
+        policy.normalized_version(release_tag)
+    except policy.ReleaseTagError as error:
+        raise ReleaseStateError(f"Unsupported release tag {release_tag!r}.") from error
 
 
 def is_prerelease_tag(release_tag: str) -> bool:
@@ -81,8 +100,11 @@ def is_prerelease_tag(release_tag: str) -> bool:
     Returns:
         Whether the tag has an accepted prerelease suffix.
     """
-    require_release_tag(release_tag)
-    return re.search(r"(?:a|b|rc)\d+$", release_tag) is not None
+    policy = release_version_module()
+    try:
+        return policy.is_prerelease_tag(release_tag)
+    except policy.ReleaseTagError as error:
+        raise ReleaseStateError(f"Unsupported release tag {release_tag!r}.") from error
 
 
 def version_from_text(text: str, *, source: str) -> str:
