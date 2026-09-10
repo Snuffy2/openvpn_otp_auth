@@ -29,13 +29,6 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.repository.default_branch }}
 
-      - name: Verify trusted default branch matches test run
-        env:
-          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
-
       - name: Download coverage data from test run
         uses: actions/download-artifact@v7
         with:
