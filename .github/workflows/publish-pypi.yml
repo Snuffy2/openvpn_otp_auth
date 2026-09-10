@@ -1,0 +1,152 @@
+name: Publish Python Distribution
+
+run-name: Publish ${{ github.event.release.tag_name || github.ref_name }}
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event.repository.fork == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the publication source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate the released revision
+        if: github.event_name == 'release'
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TARGET: ${{ github.event.release.target_commitish }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_TARGET" != "$DEFAULT_BRANCH" ]]; then
+            echo "Release target must be the default branch." >&2
+            exit 1
+          fi
+          if [[ "$IS_PRERELEASE" == "false" ]]; then
+            if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Stable release tag must be a v-prefixed semantic version." >&2
+              exit 1
+            fi
+          elif [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(a|b|rc)[0-9]+$ ]]; then
+            echo "Prerelease tag must contain a supported prerelease suffix." >&2
+            exit 1
+          fi
+          git fetch --force --no-tags origin \
+            "refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
+          tag_sha="$(git rev-parse "$RELEASE_TAG^{}")"
+          if [[ "$(git rev-parse HEAD)" != "$tag_sha" ]]; then
+            echo "Checked-out revision does not match the release tag." >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$tag_sha" "refs/remotes/origin/$DEFAULT_BRANCH"; then
+            echo "Release tag must identify a default-branch commit." >&2
+            exit 1
+          fi
+          grep -Fx "VERSION = \"$RELEASE_TAG\"  # x-release-please-version" \
+            src/openvpn_otp_auth/_version.py >/dev/null
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.14"
+
+      - name: Build and check distributions
+        run: |
+          set -euo pipefail
+          uv build
+          uvx --from twine twine check dist/*
+          version="$(sed -nE 's/^VERSION = "v?([^"[:space:]]+)".*$/\1/p' src/openvpn_otp_auth/_version.py)"
+          [[ -n "$version" ]]
+          [[ "$(find dist -type f | wc -l | tr -d ' ')" == 2 ]]
+          test -f "dist/openvpn_otp_auth-${version}.tar.gz"
+          test -f "dist/openvpn_otp_auth-${version}-py3-none-any.whl"
+
+      - name: Store distributions for trusted publishing
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  upload-release-assets:
+    needs: build
+    if: github.event_name == 'release' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: python-distributions
+          path: dist/
+
+      - name: Upload distributions to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+
+  publish-pypi:
+    needs:
+      - build
+      - upload-release-assets
+    if: >-
+      github.event_name == 'release' &&
+      github.event.release.prerelease == false &&
+      needs.upload-release-assets.result == 'success'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: python-distributions
+          path: dist/
+
+      - name: Publish stable release to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
+  publish-testpypi:
+    needs: build
+    if: >-
+      needs.build.result == 'success' &&
+      (github.event_name == 'workflow_dispatch' || github.event.release.prerelease)
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: python-distributions
+          path: dist/
+
+      - name: Publish distribution to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true

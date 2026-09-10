@@ -97,6 +97,11 @@ Do not rely on global Python tooling for validation.
 
 ## Git And File Safety
 
+- Every pull request title must use a Conventional Commit prefix accepted by
+  `.github/workflows/semantic-pull-request.yml`: `build`, `chore`, `ci`,
+  `deps`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, or
+  `test`. A scope and breaking-change marker are optional; examples include
+  `fix: reject expired sessions` and `feat(auth)!: change credential format`.
 - Do not push to GitHub or create PRs unless explicitly requested.
 - The worktree may contain unrelated user changes. Do not revert or overwrite
   changes you did not make.
