@@ -43,7 +43,7 @@ jobs:
       - name: Generate PR coverage comment artifact
         if: github.event_name == 'pull_request'
         id: coverage_comment
-        uses: py-cov-action/python-coverage-comment-action@v4.3
+        uses: py-cov-action/python-coverage-comment-action@v4.4
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ACTIVITY: process_pr
