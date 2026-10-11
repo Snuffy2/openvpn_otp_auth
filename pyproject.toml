@@ -76,6 +76,7 @@ dev = [
     "build",
     "setuptools>=77.0.0",
     "twine",
+    "urllib3>=2.8.0",  # Security floor for the publishing tools' transitive dependency
 ]
 
 [tool.uv]
