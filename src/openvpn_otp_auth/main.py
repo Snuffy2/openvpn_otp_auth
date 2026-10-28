@@ -13,7 +13,7 @@ import base64
 from binascii import Error as binascii_Error
 import configparser
 import contextlib
-import datetime
+import datetime as dt
 import logging
 import os
 from pathlib import Path
@@ -446,7 +446,7 @@ class OpenVPNOTPAuth:
         return totp.verify(otp, valid_window=1)
 
     def store_session(
-        self, username: str, vpn_client: str, current_ip: str, created: datetime.datetime
+        self, username: str, vpn_client: str, current_ip: str, created: dt.datetime
     ) -> None:
         """Store or update a session record in the session database.
 
@@ -458,7 +458,7 @@ class OpenVPNOTPAuth:
             The VPN client version or identifier.
         current_ip : str
             The IP address of the user.
-        created : datetime.datetime
+        created : dt.datetime
             The timestamp when the session was created or verified.
 
         Returns:
@@ -499,12 +499,12 @@ class OpenVPNOTPAuth:
                 (username,),
             )
             session = sessioncursor.fetchone()
-            if session is None or isinstance(session[2], datetime.datetime):
+            if session is None or isinstance(session[2], dt.datetime):
                 return session
             return (
                 session[0],
                 session[1],
-                datetime.datetime.fromisoformat(session[2]),
+                dt.datetime.fromisoformat(session[2]),
             )
         finally:
             sessiondb.close()
@@ -596,7 +596,7 @@ class OpenVPNOTPAuth:
         """
         vpn_client = os.environ.get("IV_GUI_VER")
         current_ip = os.environ.get("untrusted_ip")
-        created = datetime.datetime.now()
+        created = dt.datetime.now()
         if vpn_client is None or current_ip is None:
             logger.error(
                 "VPN client or IP address not found in environment variables. "
@@ -625,7 +625,7 @@ class OpenVPNOTPAuth:
         """
         vpn_client = os.environ.get("IV_GUI_VER")
         current_ip = os.environ.get("untrusted_ip")
-        now = datetime.datetime.now()
+        now = dt.datetime.now()
         session = self.get_session(username)
         if not session:
             logger.error(
@@ -640,7 +640,7 @@ class OpenVPNOTPAuth:
                 vpn_client,
             )
             sys.exit(1)
-        if session[2] < (now - datetime.timedelta(hours=self.session_duration)):
+        if session[2] < (now - dt.timedelta(hours=self.session_duration)):
             logger.error(
                 "Renegotiation forbidden. TOTP session for user %s expired on %s.",
                 username,

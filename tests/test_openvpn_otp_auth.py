@@ -325,7 +325,7 @@ def test_store_session_persists_session(
     module = load_module(["openvpn-otp-auth", "--install"])
     auth = module.OpenVPNOTPAuth(module.args, install=True)
     auth.session_db_file = str(tmp_path / "sessions.db")
-    created = module.datetime.datetime(2026, 5, 12, 10, 30, 0)
+    created = module.dt.datetime(2026, 5, 12, 10, 30, 0)
 
     with warnings.catch_warnings(record=True) as caught_warnings:
         warnings.simplefilter("always")
@@ -353,7 +353,7 @@ def test_get_session_returns_datetime_from_stored_session(
     """Session lookup should return parsed datetime values for validation."""
     module = load_module(["openvpn-otp-auth", "--install"])
     auth = make_auth(module, module.args, tmp_path)
-    created = module.datetime.datetime(2026, 5, 12, 10, 30, 0)
+    created = module.dt.datetime(2026, 5, 12, 10, 30, 0)
     auth.store_session("alice", "OpenVPN Connect", "198.51.100.10", created)
 
     assert auth.get_session("alice") == ("OpenVPN Connect", "198.51.100.10", created)
@@ -493,7 +493,7 @@ def test_validate_session_accepts_matching_session(
         "alice",
         "OpenVPN Connect",
         "198.51.100.10",
-        module.datetime.datetime.now(),
+        module.dt.datetime.now(),
     )
 
     with pytest.raises(SystemExit) as exc_info:
@@ -528,7 +528,7 @@ def test_validate_session_rejects_changed_or_expired_session(
         "alice",
         stored_client,
         stored_ip,
-        module.datetime.datetime.now() - module.datetime.timedelta(hours=created_offset_hours),
+        module.dt.datetime.now() - module.dt.timedelta(hours=created_offset_hours),
     )
 
     with pytest.raises(SystemExit) as exc_info:
