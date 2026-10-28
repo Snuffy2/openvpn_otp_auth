@@ -36,12 +36,19 @@ jobs:
         with:
           python-version: '3.14'
           enable-cache: true
+          ignore-nothing-to-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: Run pytest with coverage (pytest-cov)
         run: uv run --locked --group pytest pytest
 
       - name: Generate PR coverage comment artifact
-        if: github.event_name == 'pull_request'
+        # Keep required tests running for update and release PRs without posting coverage.
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.user.login != 'prek-autoupdate-bot' &&
+          github.event.pull_request.user.login != 'dependabot[bot]' &&
+          !startsWith(github.event.pull_request.head.ref, 'release-please--')
         id: coverage_comment
         uses: py-cov-action/python-coverage-comment-action@v4.5
         with:

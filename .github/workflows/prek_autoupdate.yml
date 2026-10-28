@@ -9,8 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: prek-autoupdate-${{ github.repository }}
@@ -18,6 +17,7 @@ concurrency:
 
 jobs:
   prek-autoupdate:
+    if: github.event.repository.fork == false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
